@@ -2912,6 +2912,8 @@ StartTransaction(void)
 	/* Acquire a resource group slot at the beginning of a transaction */
 	if (Gp_role == GP_ROLE_DISPATCH && IsResGroupEnabled() && IsNormalProcessingMode())
 		ResGroupSlotAcquire();
+	else if (Gp_role == GP_ROLE_EXECUTE && IsResGroupEnabled() && IsNormalProcessingMode())
+		SetCurrentResGroup();
 
 	/*
 	 * set the current transaction state information appropriately during
@@ -3491,6 +3493,8 @@ CommitTransaction(void)
 	/* Release resource group slot at the end of a transaction */
 	if (Gp_role == GP_ROLE_DISPATCH && IsResGroupEnabled() && IsNormalProcessingMode())
 		ResGroupSlotRelease();
+	if (Gp_role == GP_ROLE_EXECUTE && IsResGroupEnabled() && IsNormalProcessingMode())
+		ResetCurrentResGroup();
 }
 
 
@@ -4046,6 +4050,8 @@ CleanupTransaction(void)
 	/* Release resource group slot at the end of a transaction */
 	if (Gp_role == GP_ROLE_DISPATCH && IsResGroupEnabled() && IsNormalProcessingMode())
 		ResGroupSlotRelease();
+	else if (Gp_role == GP_ROLE_EXECUTE && IsResGroupEnabled() && IsNormalProcessingMode())
+		ResetCurrentResGroup();
 }
 
 /*
