@@ -1,0 +1,10 @@
+CREATE OR REPLACE FUNCTION resGroupPallocUdf(int) RETURNS VOID
+AS '@abs_builddir@/../regress/regress@DLSUFFIX@', 'resGroupPallocUdf' LANGUAGE C;
+
+BEGIN;
+DECLARE c1 CURSOR FOR SELECT resGroupPallocUdf(800) FROM gp_dist_random('gp_id');
+
+SELECT groupid FROM (SELECT groupid, memory_usage::json->'0' as seg0_mem FROM gp_toolkit.gp_resgroup_status) resgrouptest WHERE seg0_mem::text::int>800;
+
+ABORT;
+
