@@ -438,18 +438,11 @@ GetCpuRateLimitForResGroup(int groupId)
 {
 	char *valueStr;
 	char *proposedStr;
-	char *end;
-	double val;
 
-	getResgroupCapabilityEntry(groupId, RESGROUP_LIMIT_TYPE_CPU, &valueStr, &proposedStr);
-	val = strtod(valueStr, &end);
+	getResgroupCapabilityEntry(groupId, RESGROUP_LIMIT_TYPE_CPU,
+							   &valueStr, &proposedStr);
 
-	if (end == NULL || end == valueStr || *end != 0)
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("cpu_rate_limit requires a numeric value")));
-
-	return (float) val;
+	return str2Float(valueStr, "cpu_rate_limit");
 }
 
 /*

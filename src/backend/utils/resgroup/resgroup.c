@@ -20,6 +20,7 @@
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "pgstat.h"
+#include "port/atomics.h"
 #include "storage/ipc.h"
 #include "storage/latch.h"
 #include "storage/lmgr.h"
@@ -29,10 +30,10 @@
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
 #include "utils/memutils.h"
-#include "utils/resgroup.h"
 #include "utils/resgroup-ops.h"
-#include "utils/resowner.h"
+#include "utils/resgroup.h"
 #include "utils/resource_manager.h"
+#include "utils/resowner.h"
 #include "utils/session_state.h"
 
 /* GUC */
@@ -583,7 +584,7 @@ retry:
 					 errmsg("Cannot find resource group %d in shared memory", groupId)));
 	}
 
-	/* update memory accounting when swith resource group */
+	/* update memory accounting when switch resource group */
 	if (MySessionState->resGroupId != groupId)
 	{
 		ResGroup prevGroup = ResGroupHashFind(MySessionState->resGroupId);;
@@ -593,6 +594,7 @@ retry:
 		group->totalMemoryUsage += MySessionState->sessionVmem;
 
 		MySessionState->resGroupId = groupId;
+		ResGroupOps_AssignGroup(groupId, MyProcPid);
 	}
 	CurrentResGroup = group;
 
@@ -709,11 +711,14 @@ AssignResGroup(Oid groupId)
 	Assert(Gp_role == GP_ROLE_EXECUTE);
 
 	if (MySessionState->resGroupId == groupId)
+	{
+		ResGroupOps_AssignGroup(groupId, MyProcPid);
 		return;
+	}
 
 	Assert(groupId != InvalidOid);
 
-	/* update memory accounting when swith resource group */
+	/* update memory accounting when switch resource group */
 	LWLockAcquire(ResGroupLock, LW_EXCLUSIVE);
 	prevGroup = ResGroupHashFind(MySessionState->resGroupId);;
 	if (prevGroup != NULL)

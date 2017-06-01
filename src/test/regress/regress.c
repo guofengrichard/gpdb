@@ -40,7 +40,6 @@
 extern Datum regress_dist_ptpath(PG_FUNCTION_ARGS);
 extern Datum regress_path_dist(PG_FUNCTION_ARGS);
 extern PATH *poly2path(POLYGON *poly);
-extern Datum resGroupPallocUdf(PG_FUNCTION_ARGS);
 extern Datum interpt_pp(PG_FUNCTION_ARGS);
 extern void regress_lseg_construct(LSEG *lseg, Point *pt1, Point *pt2);
 extern Datum overpaid(PG_FUNCTION_ARGS);
@@ -216,23 +215,6 @@ poly2path(POLYGON *poly)
 	strcat(output, buf);
 	return DatumGetPathP(DirectFunctionCall1(path_in,
 											 CStringGetDatum(output)));
-}
-
-PG_FUNCTION_INFO_V1(resGroupPallocUdf);
-Datum
-resGroupPallocUdf(PG_FUNCTION_ARGS)
-{
-	int size = PG_GETARG_INT32(0);
-	palloc(size * 1024 * 1024);
-	while(1)
-	{
-		pg_usleep(1000000);
-		CHECK_FOR_INTERRUPTS();
-
-		if (QueryFinishPending)
-			break;
-	}
-	PG_RETURN_VOID();
 }
 
 /* return the point where two paths intersect, or NULL if no intersection. */

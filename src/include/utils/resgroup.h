@@ -11,8 +11,6 @@
 #ifndef RES_GROUP_H
 #define RES_GROUP_H
 
-#include "port/atomics.h"
-
 /*
  * GUC variables.
  */
@@ -32,9 +30,13 @@ typedef struct ResGroupData
 	Interval	totalQueuedTime;/* total queue time */
 
 	bool		lockedForDrop;  /* true if resource group is dropped but not committed yet */
-	uint32		totalMemoryUsage; /* memory usage of this group, should always equal to the
-									 sum of session memory(session_state->sessionVmem) that
-									 belongs to this group */
+
+	/*
+	 * memory usage of this group, should always equal to the
+	 * sum of session memory(session_state->sessionVmem) that
+	 * belongs to this group
+	 */
+	uint32		totalMemoryUsage;
 } ResGroupData;
 typedef ResGroupData *ResGroup;
 
