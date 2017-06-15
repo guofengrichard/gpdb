@@ -1306,7 +1306,8 @@ AlterResourceGroupStmt:
 				 {
 					AlterResourceGroupStmt *n = makeNode(AlterResourceGroupStmt);
 					n->name = $4;
-					n->concurrency = $7;
+					n->prop = $6;
+					n->value.i = $7;
 					$$ = (Node *)n;
 				 }
 		;

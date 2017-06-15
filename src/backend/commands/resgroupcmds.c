@@ -67,6 +67,38 @@ typedef struct ResourceGroupStatusContext
 	ResourceGroupStatusRow rows[1];
 } ResourceGroupStatusContext;
 
+typedef struct {
+	Oid			groupid;
+	int			proptype;
+	union {
+		int		i;
+		float	f;
+	}			value;
+	union {
+		int		i;
+		float	f;
+	}			proposed;
+} ResourceGroupAlterCallbackContext;
+
+typedef void (*ResourceGroupCallback) (bool isCommit, void *arg);
+typedef struct ResourceGroupCallbackItem
+{
+	struct ResourceGroupCallbackItem *next;
+	struct ResourceGroupCallbackItem *prev;
+	ResourceGroupCallback callback;
+	void *arg;
+} ResourceGroupCallbackItem;
+
+static ResourceGroupCallbackItem ResourceGroup_callbacks_head =
+{
+	.next = &ResourceGroup_callbacks_head,
+	.prev = &ResourceGroup_callbacks_head,
+	.callback = NULL,
+	.arg = NULL,
+};
+
+static ResourceGroupCallbackItem *ResourceGroup_callbacks = &ResourceGroup_callbacks_head;
+
 static float str2Float(const char *str, const char *prop);
 static float text2Float(const text *text, const char *prop);
 static int getResgroupOptionType(const char* defname);
@@ -77,12 +109,65 @@ static void insertResgroupCapabilityEntry(Relation rel, Oid groupid, uint16 type
 static void updateResgroupCapabilityEntry(Oid groupid, uint16 type, char *value, char *proposed);
 static void insertResgroupCapabilities(Oid groupid, ResourceGroupOptions *options);
 static void deleteResgroupCapabilities(Oid groupid);
-static void createResGroupAbortCallback(ResourceReleasePhase phase, bool isCommit, bool isTopLevel, void *arg);
-static void dropResGroupAbortCallback(ResourceReleasePhase phase, bool isCommit, bool isTopLevel, void *arg);
-static void alterResGroupCommitCallback(ResourceReleasePhase phase, bool isCommit, bool isTopLevel, void *arg);
+static void createResGroupAbortCallback(bool isCommit, void *arg);
+static void dropResGroupAbortCallback(bool isCommit, void *arg);
+static void alterResGroupCommitCallback(bool isCommit, void *arg);
 static ResGroupStatType propNameToType(const char *name);
 static void getCpuUsage(ResourceGroupStatusContext *ctx);
 static void getMemoryUsage(ResourceGroupStatusContext *ctx, const char *prop);
+static void RegisterResourceGroupCallback(ResourceGroupCallback callback, void *arg);
+
+/*
+ * Register callback functions for resource group related operations.
+ *
+ * At transaction end, the callback occurs post-commit or post-abort, so the
+ * callback functions can only do noncritical cleanup.
+ */
+static void
+RegisterResourceGroupCallback(ResourceGroupCallback callback, void *arg)
+{
+	ResourceGroupCallbackItem *item;
+
+	item = (ResourceGroupCallbackItem *)
+		MemoryContextAlloc(TopMemoryContext,
+						   sizeof(ResourceGroupCallbackItem));
+	item->callback = callback;
+	item->arg = arg;
+
+	item->prev = ResourceGroup_callbacks->prev;
+	item->next = ResourceGroup_callbacks;
+	item->prev->next = item;
+	item->next->prev = item;
+}
+
+/*
+ * Call resource group related callback functions at transaction end.
+ *
+ * On COMMIT, the callback functions are processed as FIFO.
+ * On ABORT,  the callback functions are processed as LIFO.
+ *
+ * Note the callback functions would be removed as being processed.
+ */
+void
+AtEOXact_ResGroup(bool isCommit)
+{
+	ResourceGroupCallbackItem *current =
+		isCommit ? ResourceGroup_callbacks->next : ResourceGroup_callbacks->prev;
+	while (current != ResourceGroup_callbacks)
+	{
+		ResourceGroupCallbackItem *tmp = isCommit? current->next : current->prev;
+
+		ResourceGroupCallback callback = current->callback;
+		void *arg =  current->arg;
+
+		current->prev->next = current->next;
+		current->next->prev = current->prev;
+		pfree(current);
+		current = tmp;
+
+		callback(isCommit, arg);
+	}
+}
 
 /*
  * CREATE RESOURCE GROUP
@@ -213,7 +298,7 @@ CreateResourceGroup(CreateResourceGroupStmt *stmt)
 		/* Argument of callback function should be allocated in heap region */
 		callbackArg = (Oid *)MemoryContextAlloc(TopMemoryContext, sizeof(Oid));
 		*callbackArg = groupid;
-		RegisterResourceReleaseCallback(createResGroupAbortCallback, (void *)callbackArg);
+		RegisterResourceGroupCallback(createResGroupAbortCallback, (void *)callbackArg);
 	}
 	else if (Gp_role == GP_ROLE_DISPATCH)
 		ereport(WARNING,
@@ -334,7 +419,7 @@ DropResourceGroup(DropResourceGroupStmt *stmt)
 		/* Argument of callback function should be allocated in heap region */
 		callbackArg = (Oid *)MemoryContextAlloc(TopMemoryContext, sizeof(Oid));
 		*callbackArg = groupid;
-		RegisterResourceReleaseCallback(dropResGroupAbortCallback, (void *)callbackArg);
+		RegisterResourceGroupCallback(dropResGroupAbortCallback, (void *)callbackArg);
 	}
 }
 
@@ -349,11 +434,14 @@ AlterResourceGroup(AlterResourceGroupStmt *stmt)
 	ScanKeyData	scankey;
 	SysScanDesc	sscan;
 	Oid			groupid;
+	ResourceGroupAlterCallbackContext * callbackCtx;
 	char		concurrencyStr[16];
 	char		concurrencyProposedStr[16];
+	int			concurrency;
 	int			concurrencyVal;
 	int			concurrencyProposed;
 	int			newConcurrency;
+	int			proptype;
 
 	/* Permission check - only superuser can alter resource groups. */
 	if (!superuser())
@@ -361,10 +449,26 @@ AlterResourceGroup(AlterResourceGroupStmt *stmt)
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 				 errmsg("must be superuser to alter resource groups")));
 
-	if (stmt->concurrency < RESGROUP_CONCURRENCY_UNLIMITED)
+	if (strcmp(stmt->prop, "concurrency") == 0)
+		proptype = RESGROUP_LIMIT_TYPE_CONCURRENCY;
+	else
+	{
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_LIMIT_VALUE),
-				 errmsg("concurrency limit cannot be less than %d", RESGROUP_CONCURRENCY_UNLIMITED)));
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 errmsg("unsupported resgroup property '%s'", stmt->prop)));
+	}
+
+	switch (proptype)
+	{
+		case RESGROUP_LIMIT_TYPE_CONCURRENCY:
+			concurrency = stmt->value.i;
+			if (concurrency < RESGROUP_CONCURRENCY_UNLIMITED)
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_LIMIT_VALUE),
+						 errmsg("concurrency limit cannot be less than %d",
+								RESGROUP_CONCURRENCY_UNLIMITED)));
+			break;
+	}
 
 	/*
 	 * Check the pg_resgroup relation to be certain the resource group already
@@ -391,24 +495,40 @@ AlterResourceGroup(AlterResourceGroupStmt *stmt)
 	systable_endscan(sscan);
 	heap_close(pg_resgroup_rel, NoLock);
 
-	GetConcurrencyForResGroup(groupid, &concurrencyVal, &concurrencyProposed);
-	newConcurrency = CalcConcurrencyValue(groupid, concurrencyVal, concurrencyProposed, stmt->concurrency);
+	/* Argument of callback function should be allocated in heap region */
+	callbackCtx = (ResourceGroupAlterCallbackContext *)
+		MemoryContextAlloc(TopMemoryContext, sizeof(*callbackCtx));
+	callbackCtx->groupid = groupid;
+	callbackCtx->proptype = proptype;
 
-	snprintf(concurrencyStr, sizeof(concurrencyStr), "%d", newConcurrency);
-	snprintf(concurrencyProposedStr, sizeof(concurrencyProposedStr), "%d", stmt->concurrency);
-	updateResgroupCapabilityEntry(groupid, RESGROUP_LIMIT_TYPE_CONCURRENCY, concurrencyStr, concurrencyProposedStr);
+	switch (proptype)
+	{
+		case RESGROUP_LIMIT_TYPE_CONCURRENCY:
+			GetConcurrencyForResGroup(groupid,
+									  &concurrencyVal,
+									  &concurrencyProposed);
+			newConcurrency = CalcConcurrencyValue(groupid,
+												  concurrencyVal,
+												  concurrencyProposed,
+												  concurrency);
+
+
+			snprintf(concurrencyStr, sizeof(concurrencyStr), "%d", newConcurrency);
+			snprintf(concurrencyProposedStr, sizeof(concurrencyProposedStr), "%d", concurrency);
+			updateResgroupCapabilityEntry(groupid, proptype, concurrencyStr, concurrencyProposedStr);
+
+			callbackCtx->value.i = newConcurrency;
+			callbackCtx->proposed.i = concurrency;
+			break;
+	}
+
 
 	/* Bump command counter to make this change visible in the callback function alterResGroupCommitCallback() */
 	CommandCounterIncrement();
 
 	if (IsResGroupEnabled())
 	{
-		Oid			*callbackArg;
-
-		/* Argument of callback function should be allocated in heap region */
-		callbackArg = (Oid *)MemoryContextAlloc(TopMemoryContext, sizeof(Oid));
-		*callbackArg = groupid;
-		RegisterResourceReleaseCallback(alterResGroupCommitCallback, (void *)callbackArg);
+		RegisterResourceGroupCallback(alterResGroupCommitCallback, (void *)callbackCtx);
 	}
 }
 
@@ -1014,15 +1134,9 @@ parseStmtOptions(CreateResourceGroupStmt *stmt, ResourceGroupOptions *options)
  * creates resource groups
  */
 static void
-createResGroupAbortCallback(ResourceReleasePhase phase,
-							bool isCommit, bool isTopLevel, void *arg)
+createResGroupAbortCallback(bool isCommit, void *arg)
 {
 	Oid groupId;
-
-	if (!isTopLevel ||
-		IsTransactionPreparing() ||
-		phase != RESOURCE_RELEASE_BEFORE_LOCKS)
-		return;
 
 	if (!isCommit)
 	{
@@ -1038,7 +1152,7 @@ createResGroupAbortCallback(ResourceReleasePhase phase,
 		ResGroupOps_DestroyGroup(groupId);
 	}
 
-	UnregisterResourceReleaseCallback(createResGroupAbortCallback, arg);
+	pfree(arg);
 }
 
 /*
@@ -1048,15 +1162,9 @@ createResGroupAbortCallback(ResourceReleasePhase phase,
  * drops resource groups
  */
 static void
-dropResGroupAbortCallback(ResourceReleasePhase phase,
-						  bool isCommit, bool isTopLevel, void *arg)
+dropResGroupAbortCallback(bool isCommit, void *arg)
 {
 	Oid groupId;
-
-	if (!isTopLevel ||
-		IsTransactionPreparing() ||
-		phase != RESOURCE_RELEASE_BEFORE_LOCKS)
-		return;
 
 	groupId = *(Oid *)arg;
 	ResGroupDropCheckForWakeup(groupId, isCommit);
@@ -1067,7 +1175,7 @@ dropResGroupAbortCallback(ResourceReleasePhase phase,
 		ResGroupOps_DestroyGroup(groupId);
 	}
 
-	UnregisterResourceReleaseCallback(dropResGroupAbortCallback, arg);
+	pfree(arg);
 }
 
 /*
@@ -1078,32 +1186,25 @@ dropResGroupAbortCallback(ResourceReleasePhase phase,
  *
  */
 static void
-alterResGroupCommitCallback(ResourceReleasePhase phase,
-						  bool isCommit, bool isTopLevel, void *arg)
+alterResGroupCommitCallback(bool isCommit, void *arg)
 {
-	Oid groupId;
-
-	if (!isTopLevel ||
-		IsTransactionPreparing() ||
-		phase != RESOURCE_RELEASE_BEFORE_LOCKS)
-		return;
-
 	if (isCommit)
 	{
-		groupId = *(Oid *)arg;
+		ResourceGroupAlterCallbackContext * ctx =
+			(ResourceGroupAlterCallbackContext *) arg;
 
-		/* wake up */
-		ResGroupAlterCheckForWakeup(groupId);
+		switch (ctx->proptype)
+		{
+			case RESGROUP_LIMIT_TYPE_CONCURRENCY:
+				/* wake up */
+				ResGroupAlterCheckForWakeup(ctx->groupid,
+											ctx->value.i,
+											ctx->proposed.i);
+				break;
+		}
 	}
-	else
-	{
-		groupId = *(Oid *)arg;
 
-		/* remove the os dependent part for this resource group */
-		ResGroupOps_DestroyGroup(groupId);
-	}
-
-	UnregisterResourceReleaseCallback(alterResGroupCommitCallback, arg);
+	pfree(arg);
 }
 
 /*

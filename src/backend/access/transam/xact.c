@@ -33,6 +33,7 @@
 #include "catalog/namespace.h"
 #include "catalog/oid_dispatch.h"
 #include "commands/async.h"
+#include "commands/resgroupcmds.h"
 #include "commands/tablecmds.h"
 #include "commands/trigger.h"
 #include "executor/spi.h"
@@ -2735,6 +2736,9 @@ CommitTransaction(void)
 	/* All relations that are in the vacuum process are being commited now. */
 	ResetVacuumRels();
 
+	/* Process resource group related callbacks */
+	AtEOXact_ResGroup(true);
+
 	/* Check we've released all buffer pins */
 	AtEOXact_Buffers(true);
 
@@ -3039,6 +3043,9 @@ PrepareTransaction(void)
 						 RESOURCE_RELEASE_BEFORE_LOCKS,
 						 true, true);
 
+	/* Process resource group related callbacks */
+	AtEOXact_ResGroup(true);
+
 	/* Check we've released all buffer pins */
 	AtEOXact_Buffers(true);
 
@@ -3262,6 +3269,7 @@ AbortTransaction(void)
 		ResourceOwnerRelease(TopTransactionResourceOwner,
 							 RESOURCE_RELEASE_BEFORE_LOCKS,
 							 false, true);
+		AtEOXact_ResGroup(false);
 		AtEOXact_Buffers(false);
 		AtEOXact_RelationCache(false);
 		AtEOXact_Inval(false);
