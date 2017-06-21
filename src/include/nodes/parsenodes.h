@@ -1894,11 +1894,7 @@ typedef struct AlterResourceGroupStmt
 {
 	NodeTag		type;
 	char	   *name;			/* resource group to alter */
-	const char *prop;			/* property name */
-	union {
-		int		i;
-		float	f;
-	}			value;			/* property value */
+	List	   *options;		/* List of DefElem nodes */
 } AlterResourceGroupStmt;
 
 /* ----------------------
