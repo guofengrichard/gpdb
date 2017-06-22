@@ -548,6 +548,10 @@ AlterResourceGroup(AlterResourceGroupStmt *stmt)
 			callbackCtx->value.i = newConcurrency;
 			callbackCtx->proposed.i = concurrency;
 			break;
+		default:
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("unsupported resource group limit type '%s'", defel->defname)));
 	}
 
 
