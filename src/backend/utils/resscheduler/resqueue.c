@@ -2091,7 +2091,7 @@ int64 ResourceQueueGetMemoryLimit(Oid queueId)
 
 	Assert(queueId != InvalidOid);
 
-	if (gp_resqueue_memory_policy != RESQUEUE_MEMORY_POLICY_NONE)
+	if (gp_resmanager_memory_policy != RESMANAGER_MEMORY_POLICY_NONE)
 	{
 		memoryLimitBytes = ResourceQueueGetMemoryLimitInCatalog(queueId);
 	}
@@ -2107,13 +2107,13 @@ uint64 ResourceQueueGetQueryMemoryLimit(PlannedStmt *stmt, Oid queueId)
 	Assert(Gp_role == GP_ROLE_DISPATCH || Gp_role == GP_ROLE_UTILITY);
 	Assert(queueId != InvalidOid);
 
-	if (gp_resqueue_memory_policy == RESQUEUE_MEMORY_POLICY_NONE)
-		return 0;
 
 	/* resource queue will not limit super user */
 	if (superuser())
 		return ResourceQueueGetSuperuserQueryMemoryLimit();
 
+	if (gp_resmanager_memory_policy == RESMANAGER_MEMORY_POLICY_NONE)
+		return 0;
 
 	/** Assert that I do not hold lwlock */
 	Assert(!LWLockHeldExclusiveByMe(ResQueueLock));
@@ -2149,9 +2149,9 @@ uint64 ResourceQueueGetQueryMemoryLimit(PlannedStmt *stmt, Oid queueId)
 
 	Assert(planCost > 0.0);
 
-	if (gp_log_resqueue_memory)
+	if (gp_log_resmanager_memory)
 	{
-		elog(gp_resqueue_memory_log_level, "numslots: %d, costlimit: %f", numSlots, costLimit);
+		elog(GP_RESMANAGER_MEMORY_LOG_LEVEL, "numslots: %d, costlimit: %f", numSlots, costLimit);
 	}
 
 	if (numSlots < 1)
@@ -2170,9 +2170,9 @@ uint64 ResourceQueueGetQueryMemoryLimit(PlannedStmt *stmt, Oid queueId)
 
 	minRatio = minDouble(minRatio, 1.0);
 
-	if (gp_log_resqueue_memory)
+	if (gp_log_resmanager_memory)
 	{
-		elog(gp_resqueue_memory_log_level, "slotratio: %0.3f, costratio: %0.3f, minratio: %0.3f",
+		elog(GP_RESMANAGER_MEMORY_LOG_LEVEL, "slotratio: %0.3f, costratio: %0.3f, minratio: %0.3f",
 				1.0/ (double) numSlots, planCost / costLimit, minRatio);
 	}
 

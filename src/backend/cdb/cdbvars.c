@@ -27,6 +27,7 @@
 #include "utils/memutils.h"
 #include "utils/resource_manager.h"
 #include "utils/resgroup.h"
+#include "utils/resscheduler.h"
 #include "utils/resgroup-ops.h"
 #include "storage/bfz.h"
 #include "storage/proc.h"
@@ -1286,15 +1287,15 @@ gpvars_assign_max_resource_groups(int newval, bool doit, GucSource source __attr
 const char *
 gpvars_assign_gp_resqueue_memory_policy(const char *newval, bool doit, GucSource source __attribute__((unused)))
 {
-	ResQueueMemoryPolicy newtype = RESQUEUE_MEMORY_POLICY_NONE;
+	ResManagerMemoryPolicy newtype = RESMANAGER_MEMORY_POLICY_NONE;
 
 	if (newval == NULL || newval[0] == 0 ||
 		!pg_strcasecmp("none", newval))
-		newtype = RESQUEUE_MEMORY_POLICY_NONE;
+		newtype = RESMANAGER_MEMORY_POLICY_NONE;
 	else if (!pg_strcasecmp("auto", newval))
-		newtype = RESQUEUE_MEMORY_POLICY_AUTO;
+		newtype = RESMANAGER_MEMORY_POLICY_AUTO;
 	else if (!pg_strcasecmp("eager_free", newval))
-		newtype = RESQUEUE_MEMORY_POLICY_EAGER_FREE;
+		newtype = RESMANAGER_MEMORY_POLICY_EAGER_FREE;
 	else
 		elog(ERROR, "unknown resource queue memory policy: current policy is '%s'", gpvars_show_gp_resqueue_memory_policy());
 
@@ -1311,11 +1312,11 @@ gpvars_show_gp_resqueue_memory_policy(void)
 {
 	switch (gp_resqueue_memory_policy)
 	{
-		case RESQUEUE_MEMORY_POLICY_NONE:
+		case RESMANAGER_MEMORY_POLICY_NONE:
 			return "none";
-		case RESQUEUE_MEMORY_POLICY_AUTO:
+		case RESMANAGER_MEMORY_POLICY_AUTO:
 			return "auto";
-		case RESQUEUE_MEMORY_POLICY_EAGER_FREE:
+		case RESMANAGER_MEMORY_POLICY_EAGER_FREE:
 			return "eager_free";
 		default:
 			return "none";

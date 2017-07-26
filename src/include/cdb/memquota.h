@@ -11,19 +11,19 @@
 #include "nodes/plannodes.h"
 #include "cdb/cdbplan.h"
 
-typedef enum ResQueueMemoryPolicy
+typedef enum ResManagerMemoryPolicy
 {
-	RESQUEUE_MEMORY_POLICY_NONE,
-	RESQUEUE_MEMORY_POLICY_AUTO,
-	RESQUEUE_MEMORY_POLICY_EAGER_FREE
-} ResQueueMemoryPolicy;
+	RESMANAGER_MEMORY_POLICY_NONE,
+	RESMANAGER_MEMORY_POLICY_AUTO,
+	RESMANAGER_MEMORY_POLICY_EAGER_FREE
+} ResManagerMemoryPolicy;
 
-extern char                		*gp_resqueue_memory_policy_str;
-extern ResQueueMemoryPolicy		gp_resqueue_memory_policy;
-extern bool						gp_log_resqueue_memory;
-extern int						gp_resqueue_memory_policy_auto_fixed_mem;
-extern const int				gp_resqueue_memory_log_level;
-extern bool						gp_resqueue_print_operator_memory_limits;
+extern ResManagerMemoryPolicy gp_resmanager_memory_policy;
+extern bool						gp_log_resmanager_memory;
+extern int						gp_resmanager_memory_policy_auto_fixed_mem;
+extern bool						gp_resmanager_print_operator_memory_limits;
+
+#define GP_RESMANAGER_MEMORY_LOG_LEVEL NOTICE
 
 extern void PolicyAutoAssignOperatorMemoryKB(PlannedStmt *stmt, uint64 memoryAvailable);
 extern void PolicyEagerFreeAssignOperatorMemoryKB(PlannedStmt *stmt, uint64 memoryAvailable);
