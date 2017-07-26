@@ -31,7 +31,6 @@ extern bool						gp_log_resqueue_memory;
 extern int						gp_resqueue_memory_policy_auto_fixed_mem;
 extern bool						gp_resqueue_print_operator_memory_limits;
 
-
 extern int	MaxResourceQueues;
 extern int	MaxResourcePortalsPerXact;
 extern bool	ResourceSelectOnly;

@@ -23,6 +23,7 @@
 #include "parser/parsetree.h"
 #include "tcop/pquery.h"
 
+ResManagerMemoryPolicy		gp_resmanager_memory_policy = RESMANAGER_MEMORY_POLICY_NONE;
 bool						gp_log_resmanager_memory = false;
 int							gp_resmanager_memory_policy_auto_fixed_mem;
 bool						gp_resmanager_print_operator_memory_limits = false;
@@ -97,11 +98,6 @@ typedef struct PolicyEagerFreeContext
 	uint64 queryMemKB; /* the query memory limit */
 	PlannedStmt *plannedStmt; /* pointer to the planned statement */
 } PolicyEagerFreeContext;
-
-/**
- * GUCs
- */
-ResManagerMemoryPolicy		gp_resmanager_memory_policy = RESMANAGER_MEMORY_POLICY_NONE;
 
 /**
  * Is an agg operator memory intensive? The following cases mean it is:
@@ -1039,6 +1035,8 @@ ResourceManagerGetQueryMemoryLimit(PlannedStmt* stmt)
 
 	if (IsResQueueEnabled())
 		return ResourceQueueGetQueryMemoryLimit(stmt, ActivePortal->queueId);
+	if (IsResGroupEnabled())
+		return ResourceGroupGetQueryMemoryLimit();
 
 	return 0;
 }

@@ -1324,6 +1324,49 @@ gpvars_show_gp_resqueue_memory_policy(void)
 }
 
 /*
+ * gpvars_assign_gp_resgroup_memory_policy
+ * gpvars_show_gp_resgroup_memory_policy
+ */
+const char *
+gpvars_assign_gp_resgroup_memory_policy(const char *newval, bool doit, GucSource source __attribute__((unused)))
+{
+	ResManagerMemoryPolicy newtype = RESMANAGER_MEMORY_POLICY_NONE;
+
+	if (newval == NULL || newval[0] == 0 ||
+		!pg_strcasecmp("none", newval))
+		newtype = RESMANAGER_MEMORY_POLICY_NONE;
+	else if (!pg_strcasecmp("auto", newval))
+		newtype = RESMANAGER_MEMORY_POLICY_AUTO;
+	else if (!pg_strcasecmp("eager_free", newval))
+		newtype = RESMANAGER_MEMORY_POLICY_EAGER_FREE;
+	else
+		elog(ERROR, "unknown resource group memory policy: current policy is '%s'", gpvars_show_gp_resgroup_memory_policy());
+
+	if (doit)
+	{
+		gp_resgroup_memory_policy = newtype;
+	}
+
+	return newval;
+}
+
+const char *
+gpvars_show_gp_resgroup_memory_policy(void)
+{
+	switch (gp_resgroup_memory_policy)
+	{
+		case RESMANAGER_MEMORY_POLICY_NONE:
+			return "none";
+		case RESMANAGER_MEMORY_POLICY_AUTO:
+			return "auto";
+		case RESMANAGER_MEMORY_POLICY_EAGER_FREE:
+			return "eager_free";
+		default:
+			return "none";
+	}
+}
+
+/*
  * gpvars_assign_statement_mem
  */
 bool
