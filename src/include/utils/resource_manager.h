@@ -28,5 +28,4 @@ extern ResourceManagerPolicy Gp_resource_manager_policy;
 
 extern bool IsResQueueEnabled(void);
 extern bool IsResGroupEnabled(void);
-
 #endif   /* RESOURCEMANAGER_H */

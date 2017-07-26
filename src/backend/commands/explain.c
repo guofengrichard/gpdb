@@ -431,17 +431,7 @@ ExplainOnePlan(PlannedStmt *plannedstmt, ParamListInfo params,
 	else
 		eflags = EXEC_FLAG_EXPLAIN_ONLY;
 
-    if (gp_resqueue_memory_policy != RESQUEUE_MEMORY_POLICY_NONE)
-    {
-		if (superuser())
-		{
-			queryDesc->plannedstmt->query_mem = ResourceQueueGetSuperuserQueryMemoryLimit();			
-		}
-		else
-		{
-			queryDesc->plannedstmt->query_mem = ResourceQueueGetQueryMemoryLimit(queryDesc->plannedstmt, GetResQueueId());			
-		}
-	}
+	queryDesc->plannedstmt->query_mem = ResourceManagerGetQueryMemoryLimit(queryDesc->plannedstmt);
 
 #ifdef USE_CODEGEN
 	if (stmt->codegen && codegen && Gp_segment == -1) {

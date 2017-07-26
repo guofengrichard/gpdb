@@ -29,26 +29,6 @@ extern void PolicyAutoAssignOperatorMemoryKB(PlannedStmt *stmt, uint64 memoryAva
 extern void PolicyEagerFreeAssignOperatorMemoryKB(PlannedStmt *stmt, uint64 memoryAvailable);
 
 /**
- * What is the memory limit on a queue per the catalog?
- */
-extern int64 ResourceQueueGetMemoryLimitInCatalog(Oid queueId);
-
-/**
- * What is the memory limit for a specific queue?
- */
-extern int64 ResourceQueueGetMemoryLimit(Oid queueId);
-
-/**
- * What is the memory limit for a query on a specific queue?
- */
-extern uint64 ResourceQueueGetQueryMemoryLimit(PlannedStmt *stmt, Oid queueId);
-
-/**
- * What is the memory reservation for superuser queries?
- */
-extern uint64 ResourceQueueGetSuperuserQueryMemoryLimit(void);
-
-/**
  * Inverse for explain analyze.
  */
 extern uint64 PolicyAutoStatementMemForNoSpillKB(PlannedStmt *stmt, uint64 minOperatorMemKB);
@@ -57,5 +37,10 @@ extern uint64 PolicyAutoStatementMemForNoSpillKB(PlannedStmt *stmt, uint64 minOp
  * Is result node memory intensive?
  */
 extern bool IsResultMemoryIntesive(Result *res);
+
+/*
+ * Calculate the amount of memory reserved for the query
+ */
+extern int64 ResourceManagerGetQueryMemoryLimit(PlannedStmt* stmt);
 
 #endif /* MEMQUOTA_H_ */

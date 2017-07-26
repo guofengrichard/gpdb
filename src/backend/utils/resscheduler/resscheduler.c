@@ -1091,3 +1091,4 @@ ResHandleUtilityStmt(Portal portal, Node *stmt)
 		portal->status = PORTAL_ACTIVE;
 	}
 }
+
