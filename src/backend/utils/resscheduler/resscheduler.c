@@ -591,14 +591,14 @@ ResLockPortal(Portal portal, QueryDesc *qDesc)
 				incData.increments[RES_COUNT_LIMIT] = 1;
 				incData.increments[RES_COST_LIMIT] = ceil(plan->total_cost);
 
-				if (gp_resmanager_memory_policy != RESMANAGER_MEMORY_POLICY_NONE)
+				if (*gp_resmanager_memory_policy != RESMANAGER_MEMORY_POLICY_NONE)
 				{
-					Assert(gp_resmanager_memory_policy == RESMANAGER_MEMORY_POLICY_AUTO ||
-						   gp_resmanager_memory_policy == RESMANAGER_MEMORY_POLICY_EAGER_FREE);
+					Assert(*gp_resmanager_memory_policy == RESMANAGER_MEMORY_POLICY_AUTO ||
+						   *gp_resmanager_memory_policy == RESMANAGER_MEMORY_POLICY_EAGER_FREE);
 					
 					uint64 queryMemory = qDesc->plannedstmt->query_mem;
 					Assert(queryMemory > 0);
-					if (gp_log_resmanager_memory)
+					if (*gp_log_resmanager_memory)
 					{
 						elog(GP_RESMANAGER_MEMORY_LOG_LEVEL, "query requested %.0fKB", (double) queryMemory / 1024.0);
 					}					
@@ -607,7 +607,7 @@ ResLockPortal(Portal portal, QueryDesc *qDesc)
 				}
 				else 
 				{
-					Assert(gp_resmanager_memory_policy == RESMANAGER_MEMORY_POLICY_NONE);
+					Assert(*gp_resmanager_memory_policy == RESMANAGER_MEMORY_POLICY_NONE);
 					incData.increments[RES_MEMORY_LIMIT] = (Cost) 0.0;				
 				}
 				takeLock = true;
@@ -630,14 +630,14 @@ ResLockPortal(Portal portal, QueryDesc *qDesc)
 				incData.increments[RES_COST_LIMIT] = ceil(plan->total_cost);
 				incData.isHold = portal->cursorOptions & CURSOR_OPT_HOLD;
 
-				if (gp_resmanager_memory_policy != RESMANAGER_MEMORY_POLICY_NONE)
+				if (*gp_resmanager_memory_policy != RESMANAGER_MEMORY_POLICY_NONE)
 				{
-					Assert(gp_resmanager_memory_policy == RESMANAGER_MEMORY_POLICY_AUTO ||
-						   gp_resmanager_memory_policy == RESMANAGER_MEMORY_POLICY_EAGER_FREE);
+					Assert(*gp_resmanager_memory_policy == RESMANAGER_MEMORY_POLICY_AUTO ||
+						   *gp_resmanager_memory_policy == RESMANAGER_MEMORY_POLICY_EAGER_FREE);
 					
 					uint64 queryMemory = qDesc->plannedstmt->query_mem;
 					Assert(queryMemory > 0);
-					if (gp_log_resmanager_memory)
+					if (*gp_log_resmanager_memory)
 					{
 						elog(NOTICE, "query requested %.0fKB", (double) queryMemory / 1024.0);
 					}
@@ -646,7 +646,7 @@ ResLockPortal(Portal portal, QueryDesc *qDesc)
 				}
 				else 
 				{
-					Assert(gp_resmanager_memory_policy == RESMANAGER_MEMORY_POLICY_NONE);
+					Assert(*gp_resmanager_memory_policy == RESMANAGER_MEMORY_POLICY_NONE);
 					incData.increments[RES_MEMORY_LIMIT] = (Cost) 0.0;				
 				}
 

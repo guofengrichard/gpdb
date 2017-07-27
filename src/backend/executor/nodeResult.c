@@ -424,7 +424,7 @@ ExecInitResult(Result *node, EState *estate, int eflags)
 	ExecAssignResultTypeFromTL(&resstate->ps);
 	ExecAssignProjectionInfo(&resstate->ps, NULL);
 
-	if (gp_resmanager_memory_policy != RESMANAGER_MEMORY_POLICY_NONE
+	if (*gp_resmanager_memory_policy != RESMANAGER_MEMORY_POLICY_NONE
 			&& IsResultMemoryIntesive(node))
 	{
 		SPI_ReserveMemory(((Plan *)node)->operatorMemKB * 1024L);

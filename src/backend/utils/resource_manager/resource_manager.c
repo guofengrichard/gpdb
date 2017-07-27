@@ -44,24 +44,25 @@ InitResManager(void)
 		InitResScheduler();
 		InitResPortalIncrementHash();
 
-		gp_resmanager_memory_policy = gp_resqueue_memory_policy;
-		gp_log_resmanager_memory = gp_log_resqueue_memory;
-		gp_resmanager_print_operator_memory_limits = gp_resqueue_print_operator_memory_limits;
-		gp_resmanager_memory_policy_auto_fixed_mem = gp_resqueue_memory_policy_auto_fixed_mem;
+		gp_resmanager_memory_policy = &gp_resqueue_memory_policy;
+		gp_log_resmanager_memory = &gp_log_resqueue_memory;
+		gp_resmanager_print_operator_memory_limits = &gp_resqueue_print_operator_memory_limits;
+		gp_resmanager_memory_policy_auto_fixed_mem = &gp_resqueue_memory_policy_auto_fixed_mem;
 	}
 	else if (IsResGroupEnabled() && !IsUnderPostmaster)
 	{
 		ResGroupControlInit();
 
-		gp_resmanager_memory_policy = gp_resgroup_memory_policy;
-		gp_log_resmanager_memory = gp_log_resgroup_memory;
-		gp_resmanager_print_operator_memory_limits = gp_resgroup_print_operator_memory_limits;
-		gp_resmanager_memory_policy_auto_fixed_mem = gp_resgroup_memory_policy_auto_fixed_mem;
+		gp_resmanager_memory_policy = &gp_resgroup_memory_policy;
+		gp_log_resmanager_memory = &gp_log_resgroup_memory;
+		gp_resmanager_print_operator_memory_limits = &gp_resgroup_print_operator_memory_limits;
+		gp_resmanager_memory_policy_auto_fixed_mem = &gp_resgroup_memory_policy_auto_fixed_mem;
 	}
 	else
 	{
-		gp_resmanager_memory_policy = RESMANAGER_MEMORY_POLICY_NONE;
-		gp_log_resmanager_memory = false;
-		gp_resmanager_print_operator_memory_limits = false;
+		gp_resmanager_memory_policy = &gp_resmanager_memory_policy_default;
+		gp_log_resmanager_memory = &gp_log_resmanager_memory_default;
+		gp_resmanager_memory_policy_auto_fixed_mem = &gp_resmanager_memory_policy_auto_fixed_mem_default;
+		gp_resmanager_print_operator_memory_limits = &gp_resmanager_print_operator_memory_limits_default;
 	}
 }

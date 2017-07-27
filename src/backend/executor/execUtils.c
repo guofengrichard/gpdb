@@ -2137,7 +2137,7 @@ void mppExecutorCleanup(QueryDesc *queryDesc)
 	/**
 	 * Since there was an error, clean up the function scan stack.
 	 */
-	if (gp_resmanager_memory_policy != RESMANAGER_MEMORY_POLICY_NONE)
+	if (*gp_resmanager_memory_policy != RESMANAGER_MEMORY_POLICY_NONE)
 	{
 		SPI_InitMemoryReservation();
 	}

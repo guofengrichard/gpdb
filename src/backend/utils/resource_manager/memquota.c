@@ -23,10 +23,15 @@
 #include "parser/parsetree.h"
 #include "tcop/pquery.h"
 
-ResManagerMemoryPolicy		gp_resmanager_memory_policy = RESMANAGER_MEMORY_POLICY_NONE;
-bool						gp_log_resmanager_memory = false;
-int							gp_resmanager_memory_policy_auto_fixed_mem;
-bool						gp_resmanager_print_operator_memory_limits = false;
+ResManagerMemoryPolicy		gp_resmanager_memory_policy_default = RESMANAGER_MEMORY_POLICY_NONE;
+bool						gp_log_resmanager_memory_default = false;
+int							gp_resmanager_memory_policy_auto_fixed_mem_default = 100;
+bool						gp_resmanager_print_operator_memory_limits_default = false;
+
+ResManagerMemoryPolicy		*gp_resmanager_memory_policy = &gp_resmanager_memory_policy_default;
+bool						*gp_log_resmanager_memory = &gp_log_resmanager_memory_default;
+int							*gp_resmanager_memory_policy_auto_fixed_mem = &gp_resmanager_memory_policy_auto_fixed_mem_default;
+bool						*gp_resmanager_print_operator_memory_limits = &gp_resmanager_print_operator_memory_limits_default;
 
 /**
  * Policy Auto. This contains information that will be used by Policy AUTO
@@ -364,7 +369,7 @@ static bool PolicyAutoPrelimWalker(Node *node, PolicyAutoContext *context)
  */
 static bool PolicyAutoAssignWalker(Node *node, PolicyAutoContext *context)
 {
-	const uint64 nonMemIntenseOpMemKB = (uint64) gp_resmanager_memory_policy_auto_fixed_mem;
+	const uint64 nonMemIntenseOpMemKB = (uint64) (*gp_resmanager_memory_policy_auto_fixed_mem);
 
 	if (node == NULL)
 	{
@@ -394,7 +399,7 @@ static bool PolicyAutoAssignWalker(Node *node, PolicyAutoContext *context)
 
 		Assert(planNode->operatorMemKB > 0);
 
-		if (gp_log_resmanager_memory)
+		if (*gp_log_resmanager_memory)
 		{
 			elog(GP_RESMANAGER_MEMORY_LOG_LEVEL, "assigning plan node memory = %dKB", (int )planNode->operatorMemKB);
 		}
@@ -424,7 +429,7 @@ void PolicyAutoAssignOperatorMemoryKB(PlannedStmt *stmt, uint64 memAvailableByte
 	 Assert(!result);
 	 Assert(ctx.numMemIntensiveOperators + ctx.numNonMemIntensiveOperators > 0);
 	 
-	 if (ctx.queryMemKB <= ctx.numNonMemIntensiveOperators * gp_resmanager_memory_policy_auto_fixed_mem)
+	 if (ctx.queryMemKB <= ctx.numNonMemIntensiveOperators * (*gp_resmanager_memory_policy_auto_fixed_mem))
 	 {
 		 elog(ERROR, ERRMSG_GP_INSUFFICIENT_STATEMENT_MEMORY);
 	 }
@@ -446,7 +451,7 @@ void PolicyAutoAssignOperatorMemoryKB(PlannedStmt *stmt, uint64 memAvailableByte
 	 Assert(stmt);
 	 Assert(minOperatorMemKB > 0);
 	 
-	 const uint64 nonMemIntenseOpMemKB = (uint64) gp_resmanager_memory_policy_auto_fixed_mem;
+	 const uint64 nonMemIntenseOpMemKB = (uint64) (*gp_resmanager_memory_policy_auto_fixed_mem);
 
 	 PolicyAutoContext ctx;
 	 exec_init_plan_tree_base(&ctx.base, stmt);
@@ -719,7 +724,7 @@ ComputeAvgMemKBForMemIntenseOp(OperatorGroupNode *groupNode)
 		return 0;
 	}
 	
-	const uint64 nonMemIntenseOpMemKB = (uint64)gp_resmanager_memory_policy_auto_fixed_mem;
+	const uint64 nonMemIntenseOpMemKB = (uint64)(*gp_resmanager_memory_policy_auto_fixed_mem);
 
 	return (((double)groupNode->groupMemKB -
 			 (double)groupNode->numNonMemIntenseOps * nonMemIntenseOpMemKB) /
@@ -758,7 +763,7 @@ ComputeMemLimitForChildGroups(OperatorGroupNode *parentGroupNode)
 			Max(childGroup->maxNumConcNonMemIntenseOps, childGroup->numNonMemIntenseOps);
 	}
 
-	const uint64 nonMemIntenseOpMemKB = (uint64)gp_resmanager_memory_policy_auto_fixed_mem;
+	const uint64 nonMemIntenseOpMemKB = (uint64)(*gp_resmanager_memory_policy_auto_fixed_mem);
 
 	foreach(lc, parentGroupNode->childGroups)
 	{
@@ -901,7 +906,7 @@ PolicyEagerFreeAssignWalker(Node *node, PolicyEagerFreeContext *context)
 	Assert(node);
 	Assert(context);
 	
-	const uint64 nonMemIntenseOpMemKB = (uint64)gp_resmanager_memory_policy_auto_fixed_mem;
+	const uint64 nonMemIntenseOpMemKB = (uint64)(*gp_resmanager_memory_policy_auto_fixed_mem);
 
 	if (is_plan_node(node))
 	{
@@ -1005,7 +1010,7 @@ PolicyEagerFreeAssignOperatorMemoryKB(PlannedStmt *stmt, uint64 memAvailableByte
 	/*
 	 * Check if memory exceeds the limit in the root group
 	 */
-	const uint64 nonMemIntenseOpMemKB = (uint64)gp_resmanager_memory_policy_auto_fixed_mem;
+	const uint64 nonMemIntenseOpMemKB = (uint64)(*gp_resmanager_memory_policy_auto_fixed_mem);
 	if (ctx.groupTree->groupMemKB < ctx.groupTree->numNonMemIntenseOps * nonMemIntenseOpMemKB)
 	{
 		ereport(ERROR,

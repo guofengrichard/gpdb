@@ -416,7 +416,7 @@ CreateSharedMemoryAndSemaphores(bool makePrivate, int port)
 	if (gp_enable_resqueue_priority)
 		BackoffStateInit();
 	
-	if (gp_resmanager_memory_policy != RESMANAGER_MEMORY_POLICY_NONE)
+	if (*gp_resmanager_memory_policy != RESMANAGER_MEMORY_POLICY_NONE)
 	{
 		SPI_InitMemoryReservation();
 	}

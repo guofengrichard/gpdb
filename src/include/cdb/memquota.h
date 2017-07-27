@@ -18,10 +18,15 @@ typedef enum ResManagerMemoryPolicy
 	RESMANAGER_MEMORY_POLICY_EAGER_FREE
 } ResManagerMemoryPolicy;
 
-extern ResManagerMemoryPolicy gp_resmanager_memory_policy;
-extern bool						gp_log_resmanager_memory;
-extern int						gp_resmanager_memory_policy_auto_fixed_mem;
-extern bool						gp_resmanager_print_operator_memory_limits;
+extern ResManagerMemoryPolicy gp_resmanager_memory_policy_default;
+extern bool						gp_log_resmanager_memory_default;
+extern int						gp_resmanager_memory_policy_auto_fixed_mem_default;
+extern bool						gp_resmanager_print_operator_memory_limits_default;
+
+extern ResManagerMemoryPolicy	*gp_resmanager_memory_policy;
+extern bool						*gp_log_resmanager_memory;
+extern int						*gp_resmanager_memory_policy_auto_fixed_mem;
+extern bool						*gp_resmanager_print_operator_memory_limits;
 
 #define GP_RESMANAGER_MEMORY_LOG_LEVEL NOTICE
 
