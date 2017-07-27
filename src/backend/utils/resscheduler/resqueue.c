@@ -23,6 +23,7 @@
 #include "catalog/pg_resqueue.h"
 #include "catalog/pg_type.h"
 #include "cdb/cdbgang.h"
+#include "cdb/cdbvars.h"
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "pgstat.h"

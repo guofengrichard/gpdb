@@ -26,8 +26,6 @@
 #include "libpq/libpq-be.h"
 #include "utils/memutils.h"
 #include "utils/resource_manager.h"
-#include "utils/resgroup.h"
-#include "utils/resscheduler.h"
 #include "utils/resgroup-ops.h"
 #include "storage/bfz.h"
 #include "storage/proc.h"

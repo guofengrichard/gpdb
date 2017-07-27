@@ -680,7 +680,7 @@ PortalStart(Portal portal, ParamListInfo params, Snapshot snapshot,
 					 * If resource scheduling is enabled, lock the portal here.
 					 * Skip this if we are superuser!
 					 */
-					if (IsResQueueEnabled() && !superuser)
+					if (IsResQueueEnabled() && !superuser())
 					{
 						portal->status = PORTAL_QUEUE;
 						/*

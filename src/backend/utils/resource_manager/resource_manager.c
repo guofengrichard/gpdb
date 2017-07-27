@@ -39,10 +39,7 @@ IsResGroupEnabled(void)
 void
 InitResManager(void)
 {
-	if (Gp_role != GP_ROLE_DISPATCH)
-		return;
-
-	if (IsResQueueEnabled())
+	if (IsResQueueEnabled() && Gp_role == GP_ROLE_DISPATCH)
 	{
 		InitResScheduler();
 		InitResPortalIncrementHash();
