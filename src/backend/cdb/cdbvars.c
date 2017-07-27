@@ -1330,9 +1330,8 @@ gpvars_assign_gp_resgroup_memory_policy(const char *newval, bool doit, GucSource
 {
 	ResManagerMemoryPolicy newtype = RESMANAGER_MEMORY_POLICY_NONE;
 
-	if (newval == NULL || newval[0] == 0 ||
-		!pg_strcasecmp("none", newval))
-		newtype = RESMANAGER_MEMORY_POLICY_NONE;
+	if (newval == NULL)
+		elog(ERROR, "unknown resource group memory policy: current policy is '%s'", gpvars_show_gp_resgroup_memory_policy());
 	else if (!pg_strcasecmp("auto", newval))
 		newtype = RESMANAGER_MEMORY_POLICY_AUTO;
 	else if (!pg_strcasecmp("eager_free", newval))

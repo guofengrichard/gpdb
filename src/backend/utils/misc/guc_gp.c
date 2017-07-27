@@ -5385,7 +5385,7 @@ struct config_string ConfigureNamesString_gp[] =
 			gettext_noop("Valid values are AUTO, EAGER_FREE.")
 		},
 		&gp_resgroup_memory_policy_str,
-		"none", gpvars_assign_gp_resgroup_memory_policy, gpvars_show_gp_resgroup_memory_policy
+		"eager_free", gpvars_assign_gp_resgroup_memory_policy, gpvars_show_gp_resgroup_memory_policy
 	},
 
 	{
