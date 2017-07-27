@@ -487,7 +487,7 @@ postquel_start(execution_state *es, SQLFunctionCachePtr fcache)
 			AfterTriggerBeginQuery();
 		
 		
-		if (*gp_resmanager_memory_policy != RESMANAGER_MEMORY_POLICY_NONE
+		if (!IsResManagerMemoryPolicyNone()
 			&& SPI_IsMemoryReserved())
 		{
 			es->qd->plannedstmt->query_mem = SPI_GetMemoryReservation();

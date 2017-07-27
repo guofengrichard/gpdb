@@ -30,6 +30,13 @@ extern bool						*gp_resmanager_print_operator_memory_limits;
 
 #define GP_RESMANAGER_MEMORY_LOG_LEVEL NOTICE
 
+#define IsResManagerMemoryPolicyNone() (*gp_resmanager_memory_policy == RESMANAGER_MEMORY_POLICY_NONE)
+#define IsResManagerMemoryPolicyAuto() (*gp_resmanager_memory_policy == RESMANAGER_MEMORY_POLICY_AUTO)
+#define IsResManagerMemoryPolicyEagerFree() (*gp_resmanager_memory_policy == RESMANAGER_MEMORY_POLICY_EAGER_FREE)
+
+#define LogResManagerMemory() (*gp_log_resmanager_memory == true)
+#define ResManagerPrintOperatorMemoryLimits() (*gp_resmanager_print_operator_memory_limits == true)
+
 extern void PolicyAutoAssignOperatorMemoryKB(PlannedStmt *stmt, uint64 memoryAvailable);
 extern void PolicyEagerFreeAssignOperatorMemoryKB(PlannedStmt *stmt, uint64 memoryAvailable);
 

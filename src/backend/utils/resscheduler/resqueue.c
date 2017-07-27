@@ -2092,7 +2092,7 @@ int64 ResourceQueueGetMemoryLimit(Oid queueId)
 
 	Assert(queueId != InvalidOid);
 
-	if (*gp_resmanager_memory_policy != RESMANAGER_MEMORY_POLICY_NONE)
+	if (!IsResManagerMemoryPolicyNone())
 	{
 		memoryLimitBytes = ResourceQueueGetMemoryLimitInCatalog(queueId);
 	}
@@ -2113,7 +2113,7 @@ uint64 ResourceQueueGetQueryMemoryLimit(PlannedStmt *stmt, Oid queueId)
 	if (superuser())
 		return ResourceQueueGetSuperuserQueryMemoryLimit();
 
-	if (*gp_resmanager_memory_policy == RESMANAGER_MEMORY_POLICY_NONE)
+	if (IsResManagerMemoryPolicyNone())
 		return 0;
 
 	/** Assert that I do not hold lwlock */
@@ -2150,7 +2150,7 @@ uint64 ResourceQueueGetQueryMemoryLimit(PlannedStmt *stmt, Oid queueId)
 
 	Assert(planCost > 0.0);
 
-	if (*gp_log_resmanager_memory)
+	if (LogResManagerMemory())
 	{
 		elog(GP_RESMANAGER_MEMORY_LOG_LEVEL, "numslots: %d, costlimit: %f", numSlots, costLimit);
 	}
@@ -2171,7 +2171,7 @@ uint64 ResourceQueueGetQueryMemoryLimit(PlannedStmt *stmt, Oid queueId)
 
 	minRatio = minDouble(minRatio, 1.0);
 
-	if (*gp_log_resmanager_memory)
+	if (LogResManagerMemory())
 	{
 		elog(GP_RESMANAGER_MEMORY_LOG_LEVEL, "slotratio: %0.3f, costratio: %0.3f, minratio: %0.3f",
 				1.0/ (double) numSlots, planCost / costLimit, minRatio);

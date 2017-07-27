@@ -821,7 +821,7 @@ ResourceGroupGetQueryMemoryLimit(void)
 	Assert(MyResGroupProcInfo != NULL);
 	Assert(MyResGroupProcInfo->slotId != InvalidOid);
 
-	if (*gp_resmanager_memory_policy == RESMANAGER_MEMORY_POLICY_NONE)
+	if (IsResManagerMemoryPolicyNone())
 		return 0;
 
 	slot = &MyResGroupSharedInfo->slots[MyResGroupProcInfo->slotId];

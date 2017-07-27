@@ -1437,7 +1437,7 @@ explain_outNode(StringInfo str,
 					 plan->startup_cost, plan->total_cost,
 					 ceil(plan->plan_rows / scaleFactor), plan->plan_width);
 
-	if (*gp_resmanager_print_operator_memory_limits)
+	if (ResManagerPrintOperatorMemoryLimits())
 	{
 		appendStringInfo(str, " (operatorMem=" UINT64_FORMAT "KB)",
 						 PlanStateOperatorMemKB(planstate));

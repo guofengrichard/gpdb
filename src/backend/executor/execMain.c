@@ -285,8 +285,8 @@ ExecutorStart(QueryDesc *queryDesc, int eflags)
 	 */
 	if (Gp_role == GP_ROLE_DISPATCH)
 	{
-		if (*gp_resmanager_memory_policy != RESMANAGER_MEMORY_POLICY_NONE &&
-			*gp_log_resmanager_memory)
+		if (!IsResManagerMemoryPolicyNone() &&
+			LogResManagerMemory())
 		{
 			elog(GP_RESMANAGER_MEMORY_LOG_LEVEL, "query requested %.0fKB of memory",
 				 (double) queryDesc->plannedstmt->query_mem / 1024.0);
@@ -309,7 +309,7 @@ ExecutorStart(QueryDesc *queryDesc, int eflags)
 														  queryDesc->plannedstmt->query_mem);
 					break;
 				default:
-					Assert(*gp_resmanager_memory_policy == RESMANAGER_MEMORY_POLICY_NONE);
+					Assert(IsResManagerMemoryPolicyNone());
 					break;
 			}
 		}

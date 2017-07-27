@@ -399,7 +399,7 @@ static bool PolicyAutoAssignWalker(Node *node, PolicyAutoContext *context)
 
 		Assert(planNode->operatorMemKB > 0);
 
-		if (*gp_log_resmanager_memory)
+		if (LogResManagerMemory())
 		{
 			elog(GP_RESMANAGER_MEMORY_LOG_LEVEL, "assigning plan node memory = %dKB", (int )planNode->operatorMemKB);
 		}
