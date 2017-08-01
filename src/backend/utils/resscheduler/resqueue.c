@@ -2023,18 +2023,6 @@ pg_resqueue_status_kv(PG_FUNCTION_ARGS)
 		SRF_RETURN_DONE(funcctx);
 }
 
-/**
- * Minimum of two doubles
- */
-static double minDouble(double a, double b)
-{
-	if (a < b)
-		return a;
-	else
-		return b;
-}
-
-
  /**
   * What is the memory limit on a queue per the catalog in bytes. Returns -1 if not set.
   */
@@ -2167,9 +2155,9 @@ uint64 ResourceQueueGetQueryMemoryLimit(PlannedStmt *stmt, Oid queueId)
 		costLimit = planCost;
 	}
 
-	double minRatio = minDouble( 1.0/ (double) numSlots, planCost / costLimit);
+	double minRatio = Min( 1.0/ (double) numSlots, planCost / costLimit);
 
-	minRatio = minDouble(minRatio, 1.0);
+	minRatio = Min(minRatio, 1.0);
 
 	if (LogResManagerMemory())
 	{

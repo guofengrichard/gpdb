@@ -428,7 +428,7 @@ void PolicyAutoAssignOperatorMemoryKB(PlannedStmt *stmt, uint64 memAvailableByte
 
 	 Assert(!result);
 	 Assert(ctx.numMemIntensiveOperators + ctx.numNonMemIntensiveOperators > 0);
-	 
+
 	 if (ctx.queryMemKB <= ctx.numNonMemIntensiveOperators * (*gp_resmanager_memory_policy_auto_fixed_mem))
 	 {
 		 elog(ERROR, ERRMSG_GP_INSUFFICIENT_STATEMENT_MEMORY);
@@ -450,7 +450,7 @@ void PolicyAutoAssignOperatorMemoryKB(PlannedStmt *stmt, uint64 memAvailableByte
  {
 	 Assert(stmt);
 	 Assert(minOperatorMemKB > 0);
-	 
+
 	 const uint64 nonMemIntenseOpMemKB = (uint64) (*gp_resmanager_memory_policy_auto_fixed_mem);
 
 	 PolicyAutoContext ctx;
@@ -723,7 +723,7 @@ ComputeAvgMemKBForMemIntenseOp(OperatorGroupNode *groupNode)
 	{
 		return 0;
 	}
-	
+
 	const uint64 nonMemIntenseOpMemKB = (uint64)(*gp_resmanager_memory_policy_auto_fixed_mem);
 
 	return (((double)groupNode->groupMemKB -
@@ -905,7 +905,7 @@ PolicyEagerFreeAssignWalker(Node *node, PolicyEagerFreeContext *context)
 
 	Assert(node);
 	Assert(context);
-	
+
 	const uint64 nonMemIntenseOpMemKB = (uint64)(*gp_resmanager_memory_policy_auto_fixed_mem);
 
 	if (is_plan_node(node))

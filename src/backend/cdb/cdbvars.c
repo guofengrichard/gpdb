@@ -1317,7 +1317,7 @@ gpvars_show_gp_resqueue_memory_policy(void)
 		case RESMANAGER_MEMORY_POLICY_EAGER_FREE:
 			return "eager_free";
 		default:
-			return "none";
+			elog(ERROR, "Invalid resource queue memory policy");
 	}
 }
 
@@ -1352,14 +1352,12 @@ gpvars_show_gp_resgroup_memory_policy(void)
 {
 	switch (gp_resgroup_memory_policy)
 	{
-		case RESMANAGER_MEMORY_POLICY_NONE:
-			return "none";
 		case RESMANAGER_MEMORY_POLICY_AUTO:
 			return "auto";
 		case RESMANAGER_MEMORY_POLICY_EAGER_FREE:
 			return "eager_free";
 		default:
-			return "none";
+			elog(ERROR, "Invalid resource group memory policy");
 	}
 }
 
