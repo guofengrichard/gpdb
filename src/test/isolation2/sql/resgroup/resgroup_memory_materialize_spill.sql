@@ -1,3 +1,7 @@
+-- start_matchsubs
+-- m/INSERT \d+/
+-- s/INSERT \d+/INSERT/
+-- end_matchsubs
 create schema materialize_spill;
 set search_path to materialize_spill;
 
@@ -71,7 +75,7 @@ set enable_nestloop = true;
 set optimizer=off;
 
 -- This is the actual test query.
-select * FROM test_mat_small as t1 left outer join test_mat_large AS t2 on t1.i1=t2.i2;
+select * FROM test_mat_small as t1 left outer join test_mat_large AS t2 on t1.i1=t2.i2 order by t1.i1;
 
 -- Check that the Materialize node spilled to disk, to make sure we're testing spilling
 -- as intended. The inner side of the join with the Materialize will not get executed on
@@ -85,7 +89,7 @@ from num_workfiles_created($$
 $$) as n;
 
 -- Repeat, with a LIMIT. This causes the underlying scan to finish earlier.
-select * FROM test_mat_small as t1 left outer join test_mat_large AS t2 on t1.i1=t2.i2 limit 10;
+select * FROM test_mat_small as t1 left outer join test_mat_large AS t2 on t1.i1=t2.i2 order by t1.i1 limit 10;
 select n - (select count (distinct gp_segment_id) from test_mat_small) as difference
 from num_workfiles_created($$
   explain analyze
