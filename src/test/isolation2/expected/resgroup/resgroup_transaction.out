@@ -22,7 +22,7 @@ CREATE RESOURCE GROUP rg_test_group WITH (cpu_rate_limit=5, memory_limit=5);
 ERROR:  CREATE RESOURCE GROUP cannot run inside a transaction block
 END;
 END
-SELECT * from rg_test_monitor;
+SELECT * FROM rg_test_monitor;
 groupname|concurrency|proposed_concurrency|cpu_rate_limit
 ---------+-----------+--------------------+--------------
 (0 rows)
@@ -36,7 +36,7 @@ ALTER RESOURCE GROUP rg_test_group SET CONCURRENCY 10;
 ERROR:  ALTER RESOURCE GROUP cannot run inside a transaction block
 END;
 END
-SELECT * from rg_test_monitor;
+SELECT * FROM rg_test_monitor;
 groupname    |concurrency|proposed_concurrency|cpu_rate_limit
 -------------+-----------+--------------------+--------------
 rg_test_group|20         |20                  |5             
@@ -49,7 +49,7 @@ DROP RESOURCE GROUP rg_test_group;
 ERROR:  DROP RESOURCE GROUP cannot run inside a transaction block
 END;
 END
-SELECT * from rg_test_monitor;
+SELECT * FROM rg_test_monitor;
 groupname    |concurrency|proposed_concurrency|cpu_rate_limit
 -------------+-----------+--------------------+--------------
 rg_test_group|20         |20                  |5             
@@ -75,7 +75,7 @@ CREATE RESOURCE GROUP rg_test_group WITH (cpu_rate_limit=5, memory_limit=5);
 ERROR:  CREATE RESOURCE GROUP cannot run inside a transaction block
 END;
 END
-SELECT * from rg_test_monitor;
+SELECT * FROM rg_test_monitor;
 groupname|concurrency|proposed_concurrency|cpu_rate_limit
 ---------+-----------+--------------------+--------------
 (0 rows)
@@ -94,7 +94,7 @@ ALTER RESOURCE GROUP rg_test_group SET CONCURRENCY 10;
 ERROR:  ALTER RESOURCE GROUP cannot run inside a transaction block
 END;
 END
-SELECT * from rg_test_monitor;
+SELECT * FROM rg_test_monitor;
 groupname    |concurrency|proposed_concurrency|cpu_rate_limit
 -------------+-----------+--------------------+--------------
 rg_test_group|20         |20                  |5             
@@ -112,7 +112,7 @@ DROP RESOURCE GROUP rg_test_group;
 ERROR:  DROP RESOURCE GROUP cannot run inside a transaction block
 END;
 END
-SELECT * from rg_test_monitor;
+SELECT * FROM rg_test_monitor;
 groupname    |concurrency|proposed_concurrency|cpu_rate_limit
 -------------+-----------+--------------------+--------------
 rg_test_group|20         |20                  |5             
@@ -137,7 +137,7 @@ ROLLBACK TO SAVEPOINT rg_savepoint;
 ROLLBACK
 ABORT;
 ABORT
-SELECT * from rg_test_monitor;
+SELECT * FROM rg_test_monitor;
 groupname|concurrency|proposed_concurrency|cpu_rate_limit
 ---------+-----------+--------------------+--------------
 (0 rows)
@@ -155,7 +155,7 @@ ROLLBACK TO SAVEPOINT rg_savepoint;
 ROLLBACK
 ABORT;
 ABORT
-SELECT * from rg_test_monitor;
+SELECT * FROM rg_test_monitor;
 groupname    |concurrency|proposed_concurrency|cpu_rate_limit
 -------------+-----------+--------------------+--------------
 rg_test_group|20         |20                  |5             
@@ -172,13 +172,66 @@ ROLLBACK TO SAVEPOINT rg_savepoint;
 ROLLBACK
 ABORT;
 ABORT
-SELECT * from rg_test_monitor;
+SELECT * FROM rg_test_monitor;
 groupname    |concurrency|proposed_concurrency|cpu_rate_limit
 -------------+-----------+--------------------+--------------
 rg_test_group|20         |20                  |5             
 (1 row)
 
 DROP RESOURCE GROUP rg_test_group;
+DROP
+
+-- ----------------------------------------------------------------------
+-- Test: create/alter/drop a resource group in function call
+-- ----------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION rg_create_func() RETURNS VOID AS $$ CREATE RESOURCE GROUP rg_test_group WITH (cpu_rate_limit=5, memory_limit=5) $$ LANGUAGE SQL;
+CREATE
+
+CREATE OR REPLACE FUNCTION rg_alter_func() RETURNS VOID AS $$ ALTER RESOURCE GROUP rg_test_group SET CONCURRENCY 10 $$ LANGUAGE SQL;
+CREATE
+
+CREATE OR REPLACE FUNCTION rg_drop_func() RETURNS VOID AS $$ DROP RESOURCE GROUP rg_test_group $$ LANGUAGE SQL;
+CREATE
+
+-- CREATE RESOURCE GROUP cannot run inside a function call
+SELECT * FROM rg_create_func();
+ERROR:  CREATE RESOURCE GROUP cannot be executed from a function or multi-command string
+CONTEXT:  SQL function "rg_create_func" statement 1
+SELECT * FROM rg_test_monitor;
+groupname|concurrency|proposed_concurrency|cpu_rate_limit
+---------+-----------+--------------------+--------------
+(0 rows)
+
+-- ALTER RESOURCE GROUP cannot run inside a function call
+CREATE RESOURCE GROUP rg_test_group WITH (cpu_rate_limit=5, memory_limit=5);
+CREATE
+SELECT * FROM rg_alter_func();
+ERROR:  ALTER RESOURCE GROUP cannot be executed from a function or multi-command string
+CONTEXT:  SQL function "rg_alter_func" statement 1
+SELECT * FROM rg_test_monitor;
+groupname    |concurrency|proposed_concurrency|cpu_rate_limit
+-------------+-----------+--------------------+--------------
+rg_test_group|20         |20                  |5             
+(1 row)
+
+-- DROP RESOURCE GROUP cannot run inside a function call
+SELECT * FROM rg_drop_func();
+ERROR:  DROP RESOURCE GROUP cannot be executed from a function or multi-command string
+CONTEXT:  SQL function "rg_drop_func" statement 1
+SELECT * FROM rg_test_monitor;
+groupname    |concurrency|proposed_concurrency|cpu_rate_limit
+-------------+-----------+--------------------+--------------
+rg_test_group|20         |20                  |5             
+(1 row)
+
+DROP RESOURCE GROUP rg_test_group;
+DROP
+DROP FUNCTION rg_create_func();
+DROP
+DROP FUNCTION rg_alter_func();
+DROP
+DROP FUNCTION rg_drop_func();
 DROP
 
 -- cleanup
