@@ -37,6 +37,8 @@
 	DTRACE_PROBE4(postgresql, name, arg1, arg2, arg3, arg4)
 #define PG_TRACE5(name, arg1, arg2, arg3, arg4, arg5) \
 	DTRACE_PROBE5(postgresql, name, arg1, arg2, arg3, arg4, arg5)
+#define PG_TRACE6(name, arg1, arg2, arg3, arg4, arg5, arg6) \
+	DTRACE_PROBE6(postgresql, name, arg1, arg2, arg3, arg4, arg5, arg6)
 
 #define LTRACE_PROBE(family, fn, fc, l, i1, i2, i3, i4, i5)
 
@@ -72,6 +74,18 @@ enum
 	tuplesort__mergeonerun,
 	tuplesort__dumptuples,
 	tuplesort__switch__external,
+
+	query__parse__start,
+	query__parse__done,
+	query__rewrite__start,
+	query__rewrite__done,
+	query__plan__start,
+	query__plan__done,
+	query__start,
+	query__done,
+	query__execute__start,
+	query__execute__done,
+
 
 	/* Internal test and debug use */
 	LTR_DEBUG_START = 1000000,

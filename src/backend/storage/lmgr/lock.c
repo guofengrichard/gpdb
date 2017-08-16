@@ -962,11 +962,11 @@ LockAcquire(const LOCKTAG *locktag,
 		 * Sleep till someone wakes me up.
 		 */
 
-		PG_TRACE2(lock__startwait, locktag->locktag_field2, lockmode);
+		PG_TRACE3(lock__startwait, locktag->locktag_field2, lockmode, Gp_segment);
 
 		WaitOnLock(locallock, owner);
 
-		PG_TRACE2(lock__endwait, locktag->locktag_field2, lockmode);
+		PG_TRACE3(lock__endwait, locktag->locktag_field2, lockmode, Gp_segment);
 
 		/*
 		 * NOTE: do not do any material change of state between here and

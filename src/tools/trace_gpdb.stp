@@ -1,0 +1,210 @@
+global query_time, query_summary,
+	   parse_time, parse_summary,
+	   rewrite_time, rewrite_summary,
+	   plan_time, plan_summary,
+	   execute_time, execute_summary,
+	   trans_time, trans_summary,
+	   procnode_time, procnode_summary,
+	   lockwait_time, lockwait_summary,
+	   lwlock_time, lwlock_summary,
+	   lwlockwait_time, lwlockwait_summary
+
+probe process("/home/gpadmin/workspace/eureka/bin/postgres").mark("query__start") {
+  query_time[tid(), $arg1] = gettimeofday_us();
+}
+
+probe process("/home/gpadmin/workspace/eureka/bin/postgres").mark("query__done") {
+  p = tid()
+  t = query_time[p, $arg1]; delete query_time[p, $arg1]
+  if (t) {
+    query_summary[p, user_string($arg1)] <<< (gettimeofday_us() - t);
+  }
+}
+probe process("/home/gpadmin/workspace/eureka/bin/postgres").mark("query__parse__start") {
+  parse_time[tid(), $arg1] = gettimeofday_us();
+}
+
+probe process("/home/gpadmin/workspace/eureka/bin/postgres").mark("query__parse__done") {
+  p = tid()
+  t = parse_time[p, $arg1]; delete parse_time[p, $arg1]
+  if (t) {
+    parse_summary[p, user_string($arg1)] <<< (gettimeofday_us() - t);
+  }
+}
+
+probe process("/home/gpadmin/workspace/eureka/bin/postgres").mark("query__rewrite__start") {
+  rewrite_time[tid(), $arg1] = gettimeofday_us();
+}
+
+probe process("/home/gpadmin/workspace/eureka/bin/postgres").mark("query__rewrite__done") {
+  p = tid()
+  t = rewrite_time[p, $arg1]; delete rewrite_time[p, $arg1]
+  if (t) {
+    rewrite_summary[p, user_string($arg1)] <<< (gettimeofday_us() - t);
+  }
+}
+
+probe process("/home/gpadmin/workspace/eureka/bin/postgres").mark("query__plan__start") {
+  plan_time[tid()] = gettimeofday_us();
+}
+
+probe process("/home/gpadmin/workspace/eureka/bin/postgres").mark("query__plan__done") {
+  p = tid()
+  t = plan_time[p]; delete plan_time[p]
+  if (t) {
+    plan_summary[p] <<< (gettimeofday_us() - t);
+  }
+}
+
+probe process("/home/gpadmin/workspace/eureka/bin/postgres").mark("query__execute__start") {
+  execute_time[tid(), $arg1] = gettimeofday_us();
+}
+
+probe process("/home/gpadmin/workspace/eureka/bin/postgres").mark("query__execute__done") {
+  p = tid()
+  t = execute_time[p, $arg1]; delete execute_time[p, $arg1]
+  if (t) {
+    execute_summary[p, $arg1] <<< (gettimeofday_us() - t);
+  }
+}
+
+probe process("/home/gpadmin/workspace/eureka/bin/postgres").mark("transaction__start") {
+  trans_time[tid(), $arg1, $arg2] = gettimeofday_us();
+}
+
+probe process("/home/gpadmin/workspace/eureka/bin/postgres").mark("transaction__commit") {
+  p = tid()
+  t = trans_time[p, $arg1, $arg2]; delete trans_time[p, $arg1, $arg2]
+  if (t) {
+    trans_summary[p, $arg1, $arg2] <<< (gettimeofday_us() - t);
+  }
+}
+
+probe process("/home/gpadmin/workspace/eureka/bin/postgres").mark("transaction__abort") {
+  p = tid()
+  t = trans_time[p, $arg1, $arg2]; delete trans_time[p, $arg1, $arg2]
+  if (t) {
+    trans_summary[p, $arg1, $arg2] <<< (gettimeofday_us() - t);
+  }
+}
+
+probe process("/home/gpadmin/workspace/eureka/bin/postgres").mark("execprocnode__enter") {
+  procnode_time[tid(), $arg1, $arg2, $arg3, $arg4] = gettimeofday_us();
+}
+
+probe process("/home/gpadmin/workspace/eureka/bin/postgres").mark("execprocnode__exit") {
+  p = tid()
+  t = procnode_time[p, $arg1, $arg2, $arg3, $arg4]; delete procnode_time[p, $arg1, $arg2, $arg3, $arg4]
+  if (t) {
+    procnode_summary[p, $arg1, $arg2, $arg3, $arg4] <<< (gettimeofday_us() - t);
+  }
+}
+
+probe process("/home/gpadmin/workspace/eureka/bin/postgres").mark("lock__startwait") {
+  lockwait_time[tid(), $arg1, $arg2, $arg3] = gettimeofday_us();
+}
+
+probe process("/home/gpadmin/workspace/eureka/bin/postgres").mark("lock__endwait") {
+  p = tid()
+  t = lockwait_time[p, $arg1, $arg2, $arg3]; delete lockwait_time[p, $arg1, $arg2, $arg3]
+  if (t) {
+    lockwait_summary[p, $arg1, $arg2, $arg3] <<< (gettimeofday_us() - t);
+  }
+}
+
+probe process("/home/gpadmin/workspace/eureka/bin/postgres").mark("lwlock__startwait") {
+  lwlockwait_time[tid(), $arg1, $arg2, $arg3] = gettimeofday_us();
+}
+
+probe process("/home/gpadmin/workspace/eureka/bin/postgres").mark("lwlock__endwait") {
+  p = tid()
+  t = lwlockwait_time[p, $arg1, $arg2, $arg3]; delete lwlockwait_time[p, $arg1, $arg2, $arg3]
+  if (t) {
+    lwlockwait_summary[p, $arg1, $arg2, $arg3] <<< (gettimeofday_us() - t);
+  }
+}
+
+probe process("/home/gpadmin/workspace/eureka/bin/postgres").mark("lwlock__acquire") {
+  lwlock_time[tid(), $arg1, $arg3] = gettimeofday_us();
+}
+
+probe process("/home/gpadmin/workspace/eureka/bin/postgres").mark("lwlock__release") {
+  p = tid()
+  t = lwlock_time[p, $arg1, $arg2]; delete lwlock_time[p, $arg1, $arg2]
+  if (t) {
+    lwlock_summary[p, $arg1, $arg2] <<< (gettimeofday_us() - t);
+  }
+}
+
+probe end {
+  printf("\nquery_summary\n");
+  printf("pid\tcount\tmin\tavg\tmax\tquery_string\n");
+  foreach ( [p,q] in query_summary) {
+    printf("%d\t%d\t%d\t%d\t%d\t%s\n", p, @count(query_summary[p,q]),
+     @min(query_summary[p,q]), @avg(query_summary[p,q]), @max(query_summary[p,q]), q);
+  }
+
+  printf("\nparse_summary\n");
+  printf("pid\tcount\tmin\tavg\tmax\tquery_string\n");
+  foreach ( [p,q] in parse_summary) {
+    printf("%d\t%d\t%d\t%d\t%d\t%s\n", p, @count(parse_summary[p,q]),
+     @min(parse_summary[p,q]), @avg(parse_summary[p,q]), @max(parse_summary[p,q]), q);
+  }
+
+  printf("\nrewrite_summary\n");
+  printf("pid\tcount\tmin\tavg\tmax\tquery_string\n");
+  foreach ( [p,q] in rewrite_summary) {
+    printf("%d\t%d\t%d\t%d\t%d\t%s\n", p, @count(rewrite_summary[p,q]),
+     @min(rewrite_summary[p,q]), @avg(rewrite_summary[p,q]), @max(rewrite_summary[p,q]),q);
+  }
+
+  printf("\nplan_summary\n");
+  printf("pid\tcount\tmin\tavg\tmax\n");
+  foreach ( p in plan_summary) {
+    printf("%d\t%d\t%d\t%d\t%d\n", p, @count(plan_summary[p]),
+     @min(plan_summary[p]), @avg(plan_summary[p]), @max(plan_summary[p]));
+  }
+
+  printf("\nexecute_summary\n");
+  printf("pid\tsegment\tcount\tmin\tavg\tmax\n");
+  foreach ( [p,q1] in execute_summary) {
+    printf("%d\t%d\t%d\t%d\t%d\t%d\n", p, q1, @count(execute_summary[p,q1]),
+     @min(execute_summary[p,q1]), @avg(execute_summary[p,q1]), @max(execute_summary[p,q1]));
+  }
+
+  printf("\ntransaction_summary\n");
+  printf("pid\txid\tsegment\tcount\tmin\tavg\tmax\n");
+  foreach ( [p,q2, q3] in trans_summary) {
+    printf("%d\t%d\t%d\t%d\t%d\t%d\t%d\n", p, q2, q3, @count(trans_summary[p,q2, q3]),
+     @min(trans_summary[p,q2,q3]), @avg(trans_summary[p,q2,q3]), @max(trans_summary[p,q2,q3]));
+  }
+
+  printf("\nprocnode_summary\n");
+  printf("pid\tsegment\tsliceid\tnode\tplanid\tcount\tmin\tavg\tmax\n");
+  foreach ( [p,q1, q2, q3, q4] in procnode_summary) {
+    printf("%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n", p, q1, q2, q3, q4, @count(procnode_summary[p,q1, q2, q3, q4]),
+     @min(procnode_summary[p,q1, q2, q3, q4]), @avg(procnode_summary[p,q1, q2, q3, q4]), @max(procnode_summary[p,q1, q2, q3, q4]));
+  }
+
+  printf("\nlockwait_summary\n");
+  printf("pid\trelid\tmode\tsegment\tcount\tmin\tavg\tmax\n");
+  foreach ( [p,q1, q2, q3] in lockwait_summary) {
+    printf("%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n", p, q1, q2, q3, @count(lockwait_summary[p,q1, q2, q3]),
+     @min(lockwait_summary[p,q1, q2, q3]), @avg(lockwait_summary[p,q1, q2, q3]), @max(lockwait_summary[p,q1, q2, q3]));
+  }
+
+  printf("\nlwlockwait_summary\n");
+  printf("pid\trelid\tmode\tsegment\tcount\tmin\tavg\tmax\n");
+  foreach ( [p,q1, q2, q3] in lwlockwait_summary) {
+    printf("%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n", p, q1, q2, q3, @count(lwlockwait_summary[p,q1, q2, q3]),
+     @min(lwlockwait_summary[p,q1, q2, q3]), @avg(lwlockwait_summary[p,q1, q2, q3]), @max(lwlockwait_summary[p,q1, q2, q3]));
+  }
+
+  printf("\nlwlock_summary\n");
+  printf("pid\tlockid\tsegment\tcount\tmin\tavg\tmax\n");
+  foreach ( [p,q1, q2] in lwlock_summary) {
+    printf("%d\t%d\t%d\t%d\t%d\t%d\t%d\n", p, q1, q2, @count(lwlock_summary[p,q1, q2]),
+     @min(lwlock_summary[p,q1, q2]), @avg(lwlock_summary[p,q1, q2]), @max(lwlock_summary[p,q1, q2]));
+  }
+}
+

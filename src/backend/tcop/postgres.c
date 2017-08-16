@@ -763,6 +763,8 @@ pg_parse_query(const char *query_string)
 {
 	List	   *raw_parsetree_list;
 
+	PG_TRACE1(query__parse__start, query_string);
+
 	if (log_parser_stats)
 		ResetUsage();
 
@@ -784,6 +786,8 @@ pg_parse_query(const char *query_string)
 	}
 #endif
 
+	PG_TRACE1(query__parse__done, query_string);
+
 	return raw_parsetree_list;
 }
 
@@ -803,6 +807,8 @@ pg_analyze_and_rewrite(Node *parsetree, const char *query_string,
 	Query	   *query;
 	List	   *querytree_list;
 
+	PG_TRACE1(query__rewrite__start, query_string);
+
 	/*
 	 * (1) Perform parse analysis.
 	 */
@@ -818,6 +824,8 @@ pg_analyze_and_rewrite(Node *parsetree, const char *query_string,
 	 * (2) Rewrite the queries, as necessary
 	 */
 	querytree_list = pg_rewrite_query(query);
+
+	PG_TRACE1(query__rewrite__done, query_string);
 
 	return querytree_list;
 }
@@ -892,6 +900,8 @@ pg_plan_query(Query *querytree, int cursorOptions, ParamListInfo boundParams)
 	/* Planner must have a snapshot in case it calls user-defined functions. */
 	Assert(ActiveSnapshot != NULL);
 
+	PG_TRACE(query__plan__start);
+
 	if (log_planner_stats)
 		ResetUsage();
 
@@ -925,6 +935,8 @@ pg_plan_query(Query *querytree, int cursorOptions, ParamListInfo boundParams)
 	 */
 	if (Debug_print_plan)
 		elog_node_display(DEBUG1, "plan", plan, Debug_pretty_print);
+
+	PG_TRACE(query__plan__done);
 
 	return plan;
 }
@@ -1581,6 +1593,8 @@ exec_simple_query(const char *query_string, const char *seqServerHost, int seqSe
 
 	pgstat_report_activity(query_string);
 
+	PG_TRACE1(query__start, query_string);
+
 	/*
 	 * We use save_log_statement_stats so ShowUsage doesn't report incorrect
 	 * results because ResetUsage wasn't called.
@@ -1900,6 +1914,8 @@ exec_simple_query(const char *query_string, const char *seqServerHost, int seqSe
 
 	if (save_log_statement_stats)
 		ShowUsage("QUERY STATISTICS");
+
+	PG_TRACE1(query__done, query_string);
 
 	debug_query_string = NULL;
 }

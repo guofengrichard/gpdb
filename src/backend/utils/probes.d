@@ -9,17 +9,17 @@
 
 provider postgresql {
 
-probe transaction__start(int);
-probe transaction__commit(int);
-probe transaction__abort(int);
-probe lwlock__acquire(int, int);
-probe lwlock__release(int);
-probe lwlock__startwait(int, int);
-probe lwlock__endwait(int, int);
+probe transaction__start(int, int);
+probe transaction__commit(int, int);
+probe transaction__abort(int, int);
+probe lwlock__acquire(int, int, int);
+probe lwlock__release(int, int);
+probe lwlock__startwait(int, int, int);
+probe lwlock__endwait(int, int, int);
 probe lwlock__condacquire(int, int);
 probe lwlock__condacquire__fail(int, int);
-probe lock__startwait(int, int);
-probe lock__endwait(int, int);
+probe lock__startwait(int, int, int);
+probe lock__endwait(int, int, int);
 
 probe memctxt__alloc(int, int, int, int, int);
 probe memctxt__free(int, int, int, int, int);
@@ -37,4 +37,15 @@ probe tuplesort__switch__external(int);
 
 probe backoff__localcheck(int);
 probe backoff__globalcheck();
+
+probe query__parse__start(const char *);
+probe query__parse__done(const char *);
+probe query__rewrite__start(const char *);
+probe query__rewrite__done(const char *);
+probe query__plan__start();
+probe query__plan__done();
+probe query__start(const char *);
+probe query__done(const char *);
+probe query__execute__start(int);
+probe query__execute__done(int);
 };

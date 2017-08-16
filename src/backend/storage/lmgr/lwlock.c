@@ -33,6 +33,7 @@
 #include "storage/proc.h"
 #include "storage/spin.h"
 #include "utils/sharedsnapshot.h"
+#include "cdb/cdbvars.h"
 
 /* We use the ShmemLock spinlock to protect LWLockAssign */
 extern slock_t *ShmemLock;
@@ -561,7 +562,7 @@ LWLockAcquire(LWLockId lockid, LWLockMode mode)
 				elog(PANIC, "Waiting on lock already held!");
 		}
 
-		PG_TRACE2(lwlock__startwait, lockid, mode);
+		PG_TRACE3(lwlock__startwait, lockid, mode, Gp_segment);
 
 		for (;;)
 		{
@@ -576,7 +577,7 @@ LWLockAcquire(LWLockId lockid, LWLockMode mode)
 			extraWaits++;
 		}
 
-		PG_TRACE2(lwlock__endwait, lockid, mode);
+		PG_TRACE3(lwlock__endwait, lockid, mode, Gp_segment);
 
 		LOG_LWDEBUG("LWLockAcquire", lockid, "awakened");
 
@@ -591,7 +592,7 @@ LWLockAcquire(LWLockId lockid, LWLockMode mode)
 	/* We are done updating shared state of the lock itself. */
 	SpinLockRelease(&lock->mutex);
 
-	PG_TRACE2(lwlock__acquire, lockid, mode);
+	PG_TRACE3(lwlock__acquire, lockid, mode, Gp_segment);
 
 #ifdef LWLOCK_TRACE_MIRROREDLOCK
 	if (lockid == MirroredLock)
@@ -837,7 +838,7 @@ LWLockRelease(LWLockId lockid)
 	/* We are done updating shared state of the lock itself. */
 	SpinLockRelease(&lock->mutex);
 
-	PG_TRACE1(lwlock__release, lockid);
+	PG_TRACE2(lwlock__release, lockid, Gp_segment);
 
 	/*
 	 * Awaken any waiters I removed from the queue.

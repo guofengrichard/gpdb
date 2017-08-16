@@ -913,6 +913,8 @@ PortalRun(Portal portal, int64 count, bool isTopLevel,
 
 	AssertArg(PortalIsValid(portal));
 
+	PG_TRACE1(query__execute__start, Gp_segment);
+
 	/* Initialize completion tag to empty string */
 	if (completionTag)
 		completionTag[0] = '\0';
@@ -1070,6 +1072,8 @@ PortalRun(Portal portal, int64 count, bool isTopLevel,
 
 	if (log_executor_stats && portal->strategy != PORTAL_MULTI_QUERY)
 		ShowUsage("EXECUTOR STATISTICS");
+
+	PG_TRACE1(query__execute__done, Gp_segment);
 
 	return result;
 }

@@ -2466,7 +2466,7 @@ StartTransaction(void)
 	Assert(MyProc->backendId == vxid.backendId);
 	MyProc->lxid = vxid.localTransactionId;
 
-	PG_TRACE1(transaction__start, vxid.localTransactionId);
+	PG_TRACE2(transaction__start, vxid.localTransactionId, Gp_segment);
 
 	/*
 	 * set transaction_timestamp() (a/k/a now()).  We want this to be the same
@@ -2677,7 +2677,7 @@ CommitTransaction(void)
 	 */
 	latestXid = RecordTransactionCommit();
 
-	PG_TRACE1(transaction__commit, MyProc->lxid);
+	PG_TRACE2(transaction__commit, MyProc->lxid, Gp_segment);
 
 	/*
 	 * Let others know about no transaction in progress by me. Note that this
@@ -3247,7 +3247,7 @@ AbortTransaction(void)
 	 */
 	latestXid = RecordTransactionAbort(false);
 
-	PG_TRACE1(transaction__abort, MyProc->lxid);
+	PG_TRACE2(transaction__abort, MyProc->lxid, Gp_segment);
 
 	/*
 	 * Let others know about no transaction in progress by me. Note that this
