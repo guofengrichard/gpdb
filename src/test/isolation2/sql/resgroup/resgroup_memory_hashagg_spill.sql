@@ -46,13 +46,11 @@ DROP RESOURCE GROUP rg1_memory_test;
 -- end_ignore
 CREATE ROLE role1_memory_test SUPERUSER;
 CREATE RESOURCE GROUP rg1_memory_test WITH
-(concurrency=2, cpu_rate_limit=10, memory_limit=10, memory_shared_quota=0, memory_spill_ratio=10);
+(concurrency=2, cpu_rate_limit=10, memory_limit=30, memory_shared_quota=0, memory_spill_ratio=10);
 SET ROLE TO role1_memory_test;
 
 set statement_mem="1800";
-0: ALTER ROLE role1_memory_test RESOURCE GROUP none;
-0: DROP RESOURCE GROUP rg1_memory_test;
-0: CREATE RESOURCE GROUP rg1_memory_test WITH (concurrency=2, cpu_rate_limit=10, memory_limit=30, memory_shared_quota=0, memory_spill_ratio=2);
+0: ALTER RESOURCE GROUP rg1_memory_test SET MEMORY_SPILL_RATIO 2;
 0: ALTER ROLE role1_memory_test RESOURCE GROUP rg1_memory_test;
 set gp_resgroup_print_operator_memory_limits=on;
 
@@ -115,9 +113,7 @@ select count(*) from (select i, count(*) from aggspill group by i,j having count
 -- Reduce the statement memory, nbatches and entrysize even further to cause multiple overflows
 set gp_hashagg_default_nbatches = 4;
 set statement_mem = '5MB';
-0: ALTER ROLE role1_memory_test RESOURCE GROUP none;
-0: DROP RESOURCE GROUP rg1_memory_test;
-0: CREATE RESOURCE GROUP rg1_memory_test WITH (concurrency=2, cpu_rate_limit=10, memory_limit=30, memory_shared_quota=0, memory_spill_ratio=5);
+0: ALTER RESOURCE GROUP rg1_memory_test SET MEMORY_SPILL_RATIO 5;
 0: ALTER ROLE role1_memory_test RESOURCE GROUP rg1_memory_test;
 
 select overflows > 1 from hashagg_spill.num_hashagg_overflows('explain analyze
