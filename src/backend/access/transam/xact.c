@@ -3196,7 +3196,8 @@ AbortTransaction(void)
 	 * settings here because those can only be changed via GUC, and GUC will
 	 * take care of rolling them back if need be.)
 	 */
-	SetUserIdAndSecContext(s->prevUser, s->prevSecContext);
+	if (s->prevUser != InvalidOid)
+		SetUserIdAndSecContext(s->prevUser, s->prevSecContext);
 
 	/*
 	 * Clear the freespace map entries for any relations that
@@ -5408,7 +5409,8 @@ AbortSubTransaction(void)
 	 * Reset user ID which might have been changed transiently.  (See notes
 	 * in AbortTransaction.)
 	 */
-	SetUserIdAndSecContext(s->prevUser, s->prevSecContext);
+	if (s->prevUser != InvalidOid)
+		SetUserIdAndSecContext(s->prevUser, s->prevSecContext);
 
 	/*
 	 * We can skip all this stuff if the subxact failed before creating a
