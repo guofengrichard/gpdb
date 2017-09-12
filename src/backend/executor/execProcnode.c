@@ -831,6 +831,9 @@ ExecInitNode(Plan *node, EState *estate, int eflags)
 	/* Set up instrumentation for this node if requested */
 	if (estate->es_instrument && result != NULL)
 		result->instrument = InstrAlloc(1);
+	//TODO add guc
+	if (true && result != NULL)
+		result->statistics = StatisticsAlloc();
 
 	if (result != NULL)
 	{
@@ -1216,6 +1219,9 @@ ExecProcNode(PlanState *node)
 
 	if (node->instrument)
 		InstrStopNode(node->instrument, TupIsNull(result) ? 0.0 : 1.0);
+
+	if (node->statistics)
+		StatisticsStopNode(node->statistics, TupIsNull(result) ? 0 : 1);
 
 	if (node->plan)
 		PG_TRACE4(execprocnode__exit, Gp_segment, currentSliceId, nodeTag(node), node->plan->plan_node_id);
@@ -1630,6 +1636,10 @@ ExecEndNode(PlanState *node)
 		pfree(node->cdbexplainbuf);
 		node->cdbexplainbuf = NULL;
 	}
+
+	UpdatePlanNodeGpmonPkt(node->plan, &node->gpmon_pkt, estate, (uint8)PMNS_Finished);
+	if (node->statistics)
+		StatisticsFree(node->statistics);
 
 	switch (nodeTag(node))
 	{

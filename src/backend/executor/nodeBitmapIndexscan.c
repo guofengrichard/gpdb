@@ -126,6 +126,9 @@ MultiExecBitmapIndexScan(BitmapIndexScanState *node)
 	{
 		InstrStopNode(scanState->ss.ps.instrument, 1 /* nTuples */);
 	}
+	if (scanState->ss.ps.statistics)
+		StatisticsStopNode(scanState->ss.ps.statistics, 1);
+
 
 	return (Node *) bitmap;
 }

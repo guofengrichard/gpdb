@@ -154,6 +154,9 @@ MultiExecHash(HashState *node)
 	/* must provide our own instrumentation support */
 	if (node->ps.instrument)
 		InstrStopNode(node->ps.instrument, hashtable->totalTuples);
+	if (node->ps.statistics)
+		StatisticsStopNode(node->ps.statistics, hashtable->totalTuples);
+
 
 	/*
 	 * We do not return the hash table directly because it's not a subtype of

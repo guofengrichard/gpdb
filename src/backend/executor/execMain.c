@@ -2534,7 +2534,7 @@ ExecEndPlan(PlanState *planstate, EState *estate)
 	ResultRelInfo *resultRelInfo;
 	int			i;
 	ListCell   *l;
-
+	UpdatePlanNodeGpmonPkt(planstate->plan, &planstate->gpmon_pkt, estate, (uint8)PMNS_Finished);
 	/*
 	 * shut down any PlanQual processing we were doing
 	 */
@@ -2761,6 +2761,7 @@ ExecutePlan(EState *estate,
 	 */
 	estate->es_direction = direction;
 
+	UpdatePlanNodeGpmonPkt(planstate->plan, &planstate->gpmon_pkt, estate, (uint8)PMNS_Executing);
 	/*
 	 * Process BEFORE EACH STATEMENT triggers
 	 */

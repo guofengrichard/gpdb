@@ -67,6 +67,7 @@
 #include "utils/tqual.h"
 #include "postmaster/backoff.h"
 #include "cdb/memquota.h"
+#include "executor/instrument.h"
 #include "executor/spi.h"
 #include "utils/workfile_mgr.h"
 #include "utils/session_state.h"
@@ -233,6 +234,9 @@ CreateSharedMemoryAndSemaphores(bool makePrivate, int port)
 
 		/* Consider the size of the SessionState array */
 		size = add_size(size, SessionState_ShmemSize());
+
+		/* gpcc */
+		size = add_size(size, StatisticsShmemSize());
 
 		/*
 		 * Create the shmem segment
@@ -405,6 +409,9 @@ CreateSharedMemoryAndSemaphores(bool makePrivate, int port)
 	SyncScanShmemInit();
 	workfile_mgr_cache_init();
 	BackendCancelShmemInit();
+
+	if (!IsUnderPostmaster)
+		StatisticsShmemInit();
 
 #ifdef EXEC_BACKEND
 

@@ -16,7 +16,7 @@
 #include "cdb/cdbvars.h"
 #include "nodes/execnodes.h"
 
-void CheckSendPlanStateGpmonPkt(PlanState *ps)
+void CheckSendPlanStateGpmonPktFunc(PlanState *ps)
 {
 	if(!ps)
 		return;
@@ -37,7 +37,7 @@ void CheckSendPlanStateGpmonPkt(PlanState *ps)
 	}
 }
 
-void EndPlanStateGpmonPkt(PlanState *ps)
+void EndPlanStateGpmonPktFunc(PlanState *ps)
 {
 	if(!ps)
 		return;
@@ -75,6 +75,11 @@ void InitPlanNodeGpmonPkt(Plan *plan, gpmon_packet_t *gpmon_pkt, EState *estate)
 
 	gpmon_pkt->u.qexec.rowsout = 0;
 
+	gpmon_pkt->u.qexec.startup_cost = plan->startup_cost;
+	gpmon_pkt->u.qexec.total_cost = plan->total_cost;
+	gpmon_pkt->u.qexec.plan_rows = plan->plan_rows;
+	gpmon_pkt->u.qexec.node_type = plan->type;
+
 	gpmon_pkt->u.qexec.status = (uint8)PMNS_Initialize;
 
 	if(gp_enable_gpperfmon && estate)
@@ -83,4 +88,16 @@ void InitPlanNodeGpmonPkt(Plan *plan, gpmon_packet_t *gpmon_pkt, EState *estate)
 	}
 
 	gpmon_pkt->u.qexec.status = (uint8)PMNS_Executing;
+}
+
+/*
+ * UpdatePlanNodeGpmonPkt -- change the status of gpmon package to status, and send it off.
+ */
+
+void UpdatePlanNodeGpmonPkt(Plan *plan, gpmon_packet_t *gpmon_pkt, EState *estate, uint8 status) {
+	if(!plan)
+		return;
+
+	gpmon_pkt->u.qexec.status = status;
+	gpmon_send(gpmon_pkt);
 }

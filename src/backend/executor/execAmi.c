@@ -74,6 +74,8 @@ ExecReScan(PlanState *node, ExprContext *exprCtxt)
 	/* If collecting timing stats, update them */
 	if (node->instrument)
 		InstrEndLoop(node->instrument);
+	if (node->statistics)
+		StatisticsEndLoop(node->statistics);
 
 	/*
 	 * If we have changed parameters, propagate that info.

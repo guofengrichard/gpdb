@@ -24,6 +24,7 @@
 #include "utils/hsearch.h"
 #include "gpmon/gpmon.h"                /* gpmon_packet_t */
 #include "utils/tuplestore.h"
+#include "executor/instrument.h"
 
 /*
  * partition selector ids start from 1. Sometimes we use 0 to initialize variables
@@ -1396,6 +1397,7 @@ typedef struct PlanState
 	void      (*cdbexplainfun)(struct PlanState *planstate, struct StringInfoData *buf);
 	/* callback before ExecutorEnd */
 
+	Statistics *statistics;			/* runtime stats for this node, used in gpcc 4*/ 
 	/*
 	 * GpMon packet
 	 */
@@ -1417,10 +1419,12 @@ typedef struct Gpmon_NameVal_Text
 } Gpmon_NameVal_Text;
 
 /* Gpperfmon helper functions defined in execGpmon.c */
-extern void CheckSendPlanStateGpmonPkt(PlanState *ps);
-extern void EndPlanStateGpmonPkt(PlanState *ps);
+extern void CheckSendPlanStateGpmonPktFunc(PlanState *ps);
+#define CheckSendPlanStateGpmonPkt(p) ({if (!true){CheckSendPlanStateGpmonPktFunc(p);}})
+extern void EndPlanStateGpmonPktFunc(PlanState *ps);
+#define EndPlanStateGpmonPkt(p) ({if (!true){EndPlanStateGpmonPktFunc(p);}})
 extern void InitPlanNodeGpmonPkt(Plan* plan, gpmon_packet_t *gpmon_pkt, EState *estate);
-
+extern void UpdatePlanNodeGpmonPkt(Plan *plan, gpmon_packet_t *gpmon_pkt, EState *estate, uint8 status);
 extern uint64 PlanStateOperatorMemKB(const PlanState *ps);
 
 static inline void Gpmon_Incr_Rows_In(gpmon_packet_t *pkt)

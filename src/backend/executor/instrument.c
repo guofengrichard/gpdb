@@ -17,8 +17,11 @@
 
 #include <unistd.h>
 
+#include "storage/shmem.h"
+#include "storage/spin.h"
 #include "executor/instrument.h"
 
+Statistics *StatisticsGlobal = NULL;
 
 /* Allocate new instrumentation structure(s) */
 Instrumentation *
@@ -102,4 +105,113 @@ InstrEndLoop(Instrumentation *instr)
 	INSTR_TIME_SET_ZERO(instr->counter);
 	instr->firsttuple = 0;
 	instr->tuplecount = 0;
+}
+
+inline void
+StatisticsStopNode(Statistics *stat, int nTuples)
+{
+	stat->stats.tuplecount += nTuples;
+	if (!stat->stats.running) {
+		stat->stats.running = true;
+		instr_time	endtime;
+		INSTR_TIME_SET_CURRENT(endtime);
+		stat->stats.firsttuple = INSTR_TIME_GET_DOUBLE(endtime);
+	}
+}
+
+inline void
+StatisticsEndLoop(Statistics *stat)
+{
+	stat->stats.ntuples += stat->stats.tuplecount;
+	stat->stats.nloops += 1;
+	stat->stats.tuplecount = 0;
+}
+//inline void
+//StatisticsSetNext(Statistics *stat, Statistics *value)
+//{
+//	Statistics **next;
+
+//	next = (Statistics **) stat + sizeof(Statistics) - sizeof(void *);
+//	next = (void * Statistic *)(stat + 1) - 1;
+//	GetStatisticsNext(stat) = value;
+//}
+
+//inline Statistics *
+//StatisticsGetNext(Statistics *stat)
+//{
+//	Statistics **next;
+
+//	next = (void * Statistic *)(stat + 1) - 1;
+//	return GetStatisticsNext(stat);
+//}
+
+Size
+StatisticsShmemSize(void)
+{
+	return MaxPlanNodes * sizeof (Statistics);
+}
+
+void
+StatisticsShmemInit(void)
+{
+	Size size = StatisticsShmemSize();
+	Statistics *stats;
+	int i;
+
+	stats = (Statistics *)ShmemAlloc(size);
+	if (!stats)
+		ereport(FATAL,
+				(errcode(ERRCODE_OUT_OF_MEMORY),
+				 errmsg("out of shared memory")));
+	MemSet(stats, 0, size);
+
+	stats[0].header.head = &stats[1];
+	stats[0].header.in_use = 0;
+	stats[0].header.free = MaxPlanNodes - 1;
+	SpinLockInit(&stats[0].header.stat_lck);
+
+	for (i = 1; i < MaxPlanNodes - 1; i++)
+		GetStatisticsNext(&stats[i]) = &stats[i + 1];
+	GetStatisticsNext(&stats[i]) = NULL;
+
+	StatisticsGlobal = stats;
+}
+
+Statistics *
+StatisticsAlloc(void)
+{
+	Statistics *stat;
+
+	SpinLockAcquire(&StatisticsGlobal->header.stat_lck);
+	stat = (Statistics *)StatisticsGlobal->header.head;
+	if (stat != NULL)
+	{
+		StatisticsGlobal->header.head = GetStatisticsNext(stat);
+		StatisticsGlobal->header.free--;
+		StatisticsGlobal->header.in_use++;
+	}
+	SpinLockRelease(&StatisticsGlobal->header.stat_lck);
+
+	if (stat != NULL)
+		GetStatisticsNext(stat) = NULL;
+
+	return stat;
+}
+
+void
+StatisticsFree(Statistics *stat)
+{
+	if (stat == NULL)
+		return;
+
+	MemSet(stat, 0, sizeof(Statistics));
+
+	SpinLockAcquire(&StatisticsGlobal->header.stat_lck);
+
+	GetStatisticsNext(stat) =  StatisticsGlobal->header.head;
+	StatisticsGlobal->header.head = stat;
+	StatisticsGlobal->header.free++;
+	StatisticsGlobal->header.in_use--;
+
+	SpinLockRelease(&StatisticsGlobal->header.stat_lck);
 }

@@ -190,6 +190,9 @@ MultiExecBitmapOr(BitmapOrState *node)
 	/* must provide our own instrumentation support */
 	if (node->ps.instrument)
 		InstrStopNode(node->ps.instrument, node->bitmap ? 1 : 0);
+	if (node->ps.statistics)
+		StatisticsStopNode(node->ps.statistics, node->bitmap ? 1 : 0);
+
 
 	return node->bitmap;
 }

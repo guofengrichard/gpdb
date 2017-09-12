@@ -45,9 +45,41 @@ typedef struct Instrumentation
     struct CdbExplain_NodeSummary  *cdbNodeSummary; /* stats from all qExecs */
 } Instrumentation;
 
+#define MaxPlanNodes 50000
+typedef struct StatisticsInfo
+{
+	bool  running;
+	int16 segid;
+	int16 nid;
+	int32 pid;
+	uint64 tuplecount;
+	uint64 ntuples;
+	uint64 nloops;
+	double firsttuple;
+} StatisticsInfo;
+
+typedef struct StatisticsHeader
+{
+	void *head;
+	int in_use;
+	int free;
+	slock_t	stat_lck;
+} StatisticsHeader;
+
+typedef union {
+	StatisticsInfo stats;
+	StatisticsHeader header;
+} Statistics;
+
 extern Instrumentation *InstrAlloc(int n);
 extern void InstrStartNode(Instrumentation *instr);
 extern void InstrStopNode(Instrumentation *instr, double nTuples);
 extern void InstrEndLoop(Instrumentation *instr);
-
+extern void StatisticsStopNode(Statistics *stat, int nTuples);
+extern void StatisticsEndLoop(Statistics *stat);
+extern Size StatisticsShmemSize(void);
+extern void StatisticsShmemInit(void);
+extern Statistics * StatisticsAlloc(void);
+extern void StatisticsFree(Statistics *stat);
+#define GetStatisticsNext(ptr) (*((Statistics **)(ptr+1) - 1))
 #endif   /* INSTRUMENT_H */

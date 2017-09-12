@@ -2051,6 +2051,23 @@ void mppExecutorFinishup(QueryDesc *queryDesc)
 	}
 }
 
+static CdbVisitOpt
+StatisticsFreeWalker(PlanState *node,
+				  void *context)
+{
+	//TODO reset node->statistics to NULL after free.
+	if (node->statistics)
+		StatisticsFree(node->statistics);
+
+	return CdbVisit_Walk;
+}
+
+void StatisticsCleanup(PlanState *ps)
+{
+	if (ps)
+		planstate_walk_node(ps, StatisticsFreeWalker, NULL);
+}
+
 /*
  * Cleanup the gp-specific parts of the query executor.
  *

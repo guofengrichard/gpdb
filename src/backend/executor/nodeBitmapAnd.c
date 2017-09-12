@@ -209,6 +209,9 @@ MultiExecBitmapAnd(BitmapAndState *node)
 	/* must provide our own instrumentation support */
 	if (node->ps.instrument)
         InstrStopNode(node->ps.instrument, empty ? 0 : 1);
+	if (node->ps.statistics)
+		StatisticsStopNode(node->ps.statistics, empty ? 0 : 1);
+
 
 	if (empty)
 	{

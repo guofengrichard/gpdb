@@ -204,6 +204,10 @@ struct gpmon_qexec_t {
 	gpmon_proc_metrics_t 	_p_metrics;
 	uint64 		rowsout;
 	uint64 		rowsin;
+	double startup_cost;
+	double total_cost;
+	double plan_rows;
+	int32 node_type;
 };
 
 /*
