@@ -1,6 +1,8 @@
 #ifndef GPMON_H
 #define GPMON_H
 
+#include "executor/instrument.h"
+
 extern void gpmon_init(void);
 
 extern int64 gpmon_tick;
@@ -272,7 +274,14 @@ struct gpmon_packet_t {
     } u;
 };
 
+#define STATS_NUMBER_UDP 20
+typedef struct statistic_packet_t {
+	int64 length;
+	Statistics data[STATS_NUMBER_UDP];	
+} statistic_packet_t;
 
+
+extern void statistic_send(statistic_packet_t*);
 extern const char* gpmon_qlog_status_string(int gpmon_qlog_status);
 
 /* when adding a node type for perfmon display be sure to also update the corresponding structures in

@@ -832,9 +832,13 @@ ExecInitNode(Plan *node, EState *estate, int eflags)
 	if (estate->es_instrument && result != NULL)
 		result->instrument = InstrAlloc(1);
 	//TODO add guc
-	if (true && result != NULL)
+	if (true && result != NULL) 
+	{
 		result->statistics = StatisticsAlloc();
-
+		result->statistics->stats.pid = MyProcPid;
+		result->statistics->stats.segid = Gp_segment;
+		result->statistics->stats.nid = node->plan_node_id;
+	}
 	if (result != NULL)
 	{
 		SAVE_EXECUTOR_MEMORY_ACCOUNT(result, curMemoryAccountId);

@@ -2125,7 +2125,8 @@ ServiceStartable(PMSubProc *subProc)
 	 * GUC gp_enable_gpperfmon controls the start
 	 * of both the 'perfmon' and 'stats sender' processes
 	 */
-	if ((subProc->procType == PerfmonProc || subProc->procType == PerfmonSegmentInfoProc)
+//	if ((subProc->procType == PerfmonProc || subProc->procType == PerfmonSegmentInfoProc)
+	if ((subProc->procType == PerfmonProc)
 	    && !gp_enable_gpperfmon)
 		result = 0;
 	else

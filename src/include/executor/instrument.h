@@ -15,6 +15,7 @@
 #ifndef INSTRUMENT_H
 #define INSTRUMENT_H
 
+#include "storage/spin.h"
 #include "portability/instr_time.h"
 
 struct CdbExplain_NodeSummary;          /* private def in cdb/cdbexplain.c */
@@ -70,6 +71,8 @@ typedef union {
 	StatisticsInfo stats;
 	StatisticsHeader header;
 } Statistics;
+
+extern Statistics *StatisticsGlobal;
 
 extern Instrumentation *InstrAlloc(int n);
 extern void InstrStartNode(Instrumentation *instr);

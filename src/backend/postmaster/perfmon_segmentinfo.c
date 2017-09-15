@@ -40,6 +40,7 @@
 #include "tcop/tcopprot.h"
 #include "cdb/cdbvars.h"
 #include "utils/vmem_tracker.h"
+#include "executor/instrument.h"
 
 /* Sender-related routines */
 static void SegmentInfoSender(void);
@@ -53,12 +54,18 @@ static volatile bool isSenderProcess = false;
 /* Static gpmon_seginfo_t item, (re)used for sending UDP packets. */
 static gpmon_packet_t seginfopkt;
 
+static statistic_packet_t statinfopkt;
+
 /* Maximum dynamic memory allocation in bytes */
 static uint64 mem_alloc_max;
 
 /* GpmonPkt-related routines */
 static void InitSegmentInfoGpmonPkt(gpmon_packet_t *gpmon_pkt);
 static void UpdateSegmentInfoGpmonPkt(gpmon_packet_t *gpmon_pkt);
+
+static void StatisticsInfoSender(void);
+static void InitStatInfoPkt(statistic_packet_t *stat_pkt);
+static void UpdateStatInfoPkt(statistic_packet_t *stat_pkt);
 
 /**
  * Main entry point for segment info process. This forks off a sender process
@@ -215,6 +222,7 @@ SegmentInfoSenderLoop(void)
 			exit(1);
 
 		SegmentInfoSender();
+		StatisticsInfoSender();
 
 		/* Sleep a while. */
 		Assert(gp_perfmon_segment_interval > 0);
@@ -241,6 +249,12 @@ SegmentInfoSender()
 {
 	UpdateSegmentInfoGpmonPkt(&seginfopkt);
 	gpmon_send(&seginfopkt);
+}
+
+static void
+StatisticsInfoSender()
+{
+	UpdateStatInfoPkt(&statinfopkt);
 }
 
 /**
@@ -273,4 +287,40 @@ UpdateSegmentInfoGpmonPkt(gpmon_packet_t *gpmon_pkt)
 	uint64 mem_alloc_available = mem_alloc_max - mem_alloc_used;
 	gpmon_pkt->u.seginfo.dynamic_memory_used = mem_alloc_used;
 	gpmon_pkt->u.seginfo.dynamic_memory_available =	mem_alloc_available;
+}
+
+static void
+InitStatInfoPkt(statistic_packet_t *stat_pkt)
+{
+	Assert(stat_pkt);
+	memset(stat_pkt, 0, sizeof(statistic_packet_t));
+}
+
+static void
+UpdateStatInfoPkt(statistic_packet_t *stat_pkt)
+{
+	Assert(stat_pkt);
+	int i;
+	Statistics *current;
+
+	for (i = 1; i < MaxPlanNodes; i++)
+	{
+		current = &StatisticsGlobal[i];
+
+		if (current->stats.pid == 0 && current->stats.nid == 0 && current->stats.segid == 0) 
+			continue;
+
+		if (stat_pkt->length < STATS_NUMBER_UDP)
+			stat_pkt->data[stat_pkt->length++] = *current;
+
+		if (stat_pkt->length == STATS_NUMBER_UDP) {
+			statistic_send(stat_pkt);
+			InitStatInfoPkt(stat_pkt);
+		}
+	}
+
+	if (stat_pkt->length != 0) {
+		statistic_send(stat_pkt);
+		InitStatInfoPkt(stat_pkt);
+	}
 }

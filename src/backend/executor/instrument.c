@@ -18,7 +18,6 @@
 #include <unistd.h>
 
 #include "storage/shmem.h"
-#include "storage/spin.h"
 #include "executor/instrument.h"
 
 Statistics *StatisticsGlobal = NULL;

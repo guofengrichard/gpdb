@@ -12,6 +12,7 @@
 #endif
 #include "postgres.h"
 #include "libpq/pqsignal.h"
+#include "executor/instrument.h"
 #include "gpmon/gpmon.h"
 
 #include "utils/memutils.h"
@@ -185,6 +186,17 @@ void gpmon_send(gpmon_packet_t* p)
 		}
 	}
 	
+	if (gpmon.gxsock > 0) {
+		int n = sizeof(*p);
+		if (n != sendto(gpmon.gxsock, (const char *)p, n, 0, 
+						(struct sockaddr*) &gpmon.gxaddr, 
+						sizeof(gpmon.gxaddr))) {
+			elog(LOG, "gpmon: cannot send (%m socket %d)", gpmon.gxsock);
+		}
+	}
+}
+void statistic_send(statistic_packet_t* p)
+{
 	if (gpmon.gxsock > 0) {
 		int n = sizeof(*p);
 		if (n != sendto(gpmon.gxsock, (const char *)p, n, 0, 
