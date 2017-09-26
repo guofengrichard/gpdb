@@ -46,7 +46,8 @@
 #include "utils/vmem_tracker.h"
 
 #define InvalidSlotId	(-1)
-#define RESGROUP_MAX_SLOTS	300
+#define RESGROUP_MAX_SLOTS	(MaxConnections)
+#define RESGROUP_NULL_SLOT (-1)
 
 /*
  * GUC variables.
@@ -111,6 +112,7 @@ struct ResGroupSlotData
 	int32			memUsage;	/* total memory usage of procs belongs to this slot */
 	int				nProcs;		/* number of procs in this slot */
 	bool			inUse;
+	int				next;		/* next free slot in free list */
 };
 
 /*
@@ -141,8 +143,6 @@ struct ResGroupData
 	 */
 	int32		memUsage;
 	int32		memSharedUsage;
-
-	ResGroupSlotData slots[RESGROUP_MAX_SLOTS];
 };
 
 struct ResGroupControl
@@ -158,6 +158,9 @@ struct ResGroupControl
 
 	int32			totalChunks;	/* total memory chunks on this segment */
 	int32			freeChunks;		/* memory chunks not allocated to any group */
+
+	ResGroupSlotData *slots;		/* slot pool shared by all resource groups */
+	int				freeSlot;		/* header of free list for slot pool */
 
 	int				nGroups;
 	ResGroupData	groups[1];
@@ -214,7 +217,7 @@ static void groupDecMemUsage(ResGroupData *group,
 static void initSlot(ResGroupSlotData *slot, ResGroupCaps *caps, int sessionId);
 static void selfAttachToSlot(ResGroupData *group, ResGroupSlotData *slot);
 static void selfDetachSlot(ResGroupData *group, ResGroupSlotData *slot);
-static int getFreeSlot(ResGroupData *group);
+static int getFreeSlot(void);
 static int getSlot(ResGroupData *group);
 static void putSlot(void);
 static void ResGroupSlotAcquire(void);
@@ -264,6 +267,9 @@ ResGroupShmemSize(void)
 	/* The control structure. */
 	size = add_size(size, mul_size(MaxResourceGroups, sizeof(ResGroupData)));
 
+	/* The slot pool. */
+	size = add_size(size, mul_size(RESGROUP_MAX_SLOTS, sizeof(ResGroupSlotData)));
+
 	/* Add a safety margin */
 	size = add_size(size, size / 10);
 
@@ -281,6 +287,7 @@ ResGroupControlInit(void)
     HASHCTL     info;
     int         hash_flags;
 	int			size;
+	Size		slots_size;
 
 	size = sizeof(*pResGroupControl) - sizeof(ResGroupData);
 	size += mul_size(MaxResourceGroups, sizeof(ResGroupData));
@@ -321,6 +328,22 @@ ResGroupControlInit(void)
 
 	for (i = 0; i < MaxResourceGroups; i++)
 		pResGroupControl->groups[i].groupId = InvalidOid;
+
+	slots_size = mul_size(RESGROUP_MAX_SLOTS, sizeof(ResGroupSlotData));
+
+	/*
+	 * Alloc and initialize slot pool
+	 */
+	pResGroupControl->slots = ShmemAlloc(slots_size);
+	if (!pResGroupControl->slots)
+		goto error_out;
+
+	MemSet(pResGroupControl->slots, 0, slots_size);
+	for (i = 0; i < RESGROUP_MAX_SLOTS - 1; i++)
+		pResGroupControl->slots[i].next = i + 1;
+	pResGroupControl->slots[i].next = RESGROUP_NULL_SLOT;
+
+	pResGroupControl->freeSlot = 0;
 
     return;
 
@@ -1046,7 +1069,6 @@ ResGroupCreate(Oid groupId, const ResGroupCaps *caps)
 	group->memQuotaUsed = 0;
 	memset(&group->totalQueuedTime, 0, sizeof(group->totalQueuedTime));
 	group->lockedForDrop = false;
-	memset(group->slots, 0, sizeof(group->slots));
 
 	group->memQuotaGranted = 0;
 	group->memSharedGranted = 0;
@@ -1173,23 +1195,22 @@ initSlot(ResGroupSlotData *slot, ResGroupCaps *caps, int sessionId)
  * A free resource group slot has inUse == false, no other information is checked.
  */
 static int
-getFreeSlot(ResGroupData *group)
+getFreeSlot(void)
 {
-	int i;
+	int ret;
 
 	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
 
-	for (i = 0; i < RESGROUP_MAX_SLOTS; i++)
-	{
-		if (group->slots[i].inUse)
-			continue;
+	ret = pResGroupControl->freeSlot;
+	if (ret == RESGROUP_NULL_SLOT)
+		return InvalidSlotId;
 
-		group->slots[i].inUse = true;
-		return i;
-	}
+	pResGroupControl->freeSlot = pResGroupControl->slots[ret].next;
 
-	Assert(false && "No free slot available");
-	return InvalidSlotId;
+	Assert(!pResGroupControl->slots[ret].inUse);
+	pResGroupControl->slots[ret].inUse = true;
+
+	return ret;
 }
 
 /*
@@ -1245,7 +1266,7 @@ getSlot(ResGroupData *group)
 	}
 
 	/* Now actually get a free slot */
-	slotId = getFreeSlot(group);
+	slotId = getFreeSlot();
 	Assert(slotId != InvalidSlotId);
 
 	group->nRunning++;
@@ -1262,6 +1283,7 @@ getSlot(ResGroupData *group)
 static void
 putSlot(void)
 {
+	int					slotId = self->slotId;
 	ResGroupSlotData	*slot = self->slot;
 	ResGroupData		*group = self->group;
 	bool				shouldWakeUp;
@@ -1293,6 +1315,8 @@ putSlot(void)
 
 	/* Mark the slot as free */
 	slot->inUse = false;
+	slot->next = pResGroupControl->freeSlot;
+	pResGroupControl->freeSlot = slotId;
 
 	/* And finally decrease nRunning */
 	group->nRunning--;
@@ -1351,7 +1375,7 @@ retry:
 		if (slotId != InvalidSlotId)
 		{
 			/* got one, lucky */
-			initSlot(&group->slots[slotId], &group->caps, gp_session_id);
+			initSlot(&pResGroupControl->slots[slotId], &group->caps, gp_session_id);
 			selfSetSlot(slotId);
 
 			group->totalExecuted++;
@@ -1674,7 +1698,7 @@ wakeupSlots(ResGroupData *group)
 		Assert(waitProc->resWaiting != false);
 		Assert(waitProc->resSlotId == InvalidSlotId);
 
-		initSlot(&group->slots[slotId], &group->caps, waitProc->mppSessionId);
+		initSlot(&pResGroupControl->slots[slotId], &group->caps, waitProc->mppSessionId);
 		waitProc->resWaiting = false;
 		waitProc->resSlotId = slotId;
 		SetLatch(&waitProc->procLatch);
@@ -1843,7 +1867,7 @@ ResGroupSlotRelease(void)
 		Assert(waitProc->resWaiting != false);
 		Assert(waitProc->resSlotId == InvalidSlotId);
 
-		initSlot(&group->slots[slotId], &group->caps, waitProc->mppSessionId);
+		initSlot(&pResGroupControl->slots[slotId], &group->caps, waitProc->mppSessionId);
 		waitProc->resSlotId = slotId;	/* pass the slot to new query */
 		waitProc->resWaiting = false;
 		SetLatch(&waitProc->procLatch);
@@ -2629,7 +2653,7 @@ selfSetSlot(int slotId)
 	MyProc->resSlotId = InvalidSlotId;
 
 	self->slotId = slotId;
-	self->slot = &self->group->slots[slotId];
+	self->slot = &pResGroupControl->slots[slotId];
 }
 
 /*
