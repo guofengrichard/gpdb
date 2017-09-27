@@ -47,7 +47,6 @@
 
 #define InvalidSlotId	(-1)
 #define RESGROUP_MAX_SLOTS	(MaxConnections)
-#define RESGROUP_NULL_SLOT (-1)
 
 /*
  * GUC variables.
@@ -214,10 +213,12 @@ static int32 groupIncMemUsage(ResGroupData *group,
 static void groupDecMemUsage(ResGroupData *group,
 							 ResGroupSlotData *slot,
 							 int32 chunks);
-static void initSlot(ResGroupSlotData *slot, ResGroupCaps *caps, int sessionId);
+static void initSlot(ResGroupSlotData *slot, ResGroupCaps *caps,
+					Oid groupId, int sessionId);
 static void selfAttachToSlot(ResGroupData *group, ResGroupSlotData *slot);
 static void selfDetachSlot(ResGroupData *group, ResGroupSlotData *slot);
-static int getFreeSlot(ResGroupData *group);
+static int slotPoolAlloc(void);
+static void slotPoolFree(int slotId);
 static int getSlot(ResGroupData *group);
 static void putSlot(void);
 static void ResGroupSlotAcquire(void);
@@ -240,6 +241,8 @@ static void selfUnsetGroup(void);
 static void selfSetSlot(int slotId);
 static void selfUnsetSlot(void);
 static bool procIsInWaitQueue(const PGPROC *proc);
+static bool slotIsInUse(const ResGroupSlotData *slot);
+static bool slotIdIsValid(int slotId);
 #ifdef USE_ASSERT_CHECKING
 static bool groupIsNotDropped(const ResGroupData *group);
 #endif//USE_ASSERT_CHECKING
@@ -341,7 +344,7 @@ ResGroupControlInit(void)
 	MemSet(pResGroupControl->slots, 0, slots_size);
 	for (i = 0; i < RESGROUP_MAX_SLOTS - 1; i++)
 		pResGroupControl->slots[i].next = i + 1;
-	pResGroupControl->slots[i].next = RESGROUP_NULL_SLOT;
+	pResGroupControl->slots[RESGROUP_MAX_SLOTS - 1].next = InvalidSlotId;
 
 	pResGroupControl->freeSlot = 0;
 
@@ -1180,37 +1183,56 @@ selfDetachSlot(ResGroupData *group, ResGroupSlotData *slot)
  * Initialize the members of a slot
  */
 static void
-initSlot(ResGroupSlotData *slot, ResGroupCaps *caps, int sessionId)
+initSlot(ResGroupSlotData *slot, ResGroupCaps *caps, Oid groupId, int sessionId)
 {
-	Assert(slot->groupId != InvalidOid);
+	Assert(!slotIsInUse(slot));
 
+	slot->groupId = groupId;
 	slot->sessionId = sessionId;
 	slot->caps = *caps;
 	slot->memQuota = slotGetMemQuotaExpected(caps);
 	slot->memUsage = 0;
 }
 /*
- * Get a free resource group slot.
- *
- * A free resource group slot has groupId == InvalidOid, no other information is checked.
+ * Alloc a slot from shared slot pool
  */
 static int
-getFreeSlot(ResGroupData *group)
+slotPoolAlloc(void)
 {
 	int ret;
+	ResGroupSlotData *slot;
 
 	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
 
 	ret = pResGroupControl->freeSlot;
-	if (ret == RESGROUP_NULL_SLOT)
+	if (ret == InvalidSlotId)
 		return InvalidSlotId;
 
-	pResGroupControl->freeSlot = pResGroupControl->slots[ret].next;
+	Assert(slotIdIsValid(ret));
 
-	Assert(pResGroupControl->slots[ret].groupId == InvalidOid);
-	pResGroupControl->slots[ret].groupId = group->groupId;
+	slot = &pResGroupControl->slots[ret];
+	Assert(!slotIsInUse(slot));
+	pResGroupControl->freeSlot = slot->next;
 
 	return ret;
+}
+
+/*
+ * Free a slot back to shared slot pool
+ */
+static void
+slotPoolFree(int slotId)
+{
+	ResGroupSlotData *slot;
+
+	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
+
+	slot = &pResGroupControl->slots[slotId];
+	Assert(slotIsInUse(slot));
+
+	slot->groupId = InvalidOid;
+	slot->next = pResGroupControl->freeSlot;
+	pResGroupControl->freeSlot = slotId;
 }
 
 /*
@@ -1266,7 +1288,7 @@ getSlot(ResGroupData *group)
 	}
 
 	/* Now actually get a free slot */
-	slotId = getFreeSlot(group);
+	slotId = slotPoolAlloc();
 	Assert(slotId != InvalidSlotId);
 
 	group->nRunning++;
@@ -1299,7 +1321,7 @@ putSlot(void)
 
 	selfUnsetSlot();
 
-	Assert(slot->groupId != InvalidOid);
+	Assert(slotIsInUse(slot));
 
 	/* Return the memory quota granted to this slot */
 #ifdef USE_ASSERT_CHECKING
@@ -1314,9 +1336,7 @@ putSlot(void)
 		wakeupGroups(group->groupId);
 
 	/* Return the slot back to free list */
-	slot->groupId = InvalidOid;
-	slot->next = pResGroupControl->freeSlot;
-	pResGroupControl->freeSlot = slotId;
+	slotPoolFree(slotId);
 
 	/* And finally decrease nRunning */
 	group->nRunning--;
@@ -1375,7 +1395,8 @@ retry:
 		if (slotId != InvalidSlotId)
 		{
 			/* got one, lucky */
-			initSlot(&pResGroupControl->slots[slotId], &group->caps, gp_session_id);
+			initSlot(&pResGroupControl->slots[slotId], &group->caps,
+					group->groupId, gp_session_id);
 			selfSetSlot(slotId);
 
 			group->totalExecuted++;
@@ -1698,7 +1719,8 @@ wakeupSlots(ResGroupData *group)
 		Assert(waitProc->resWaiting != false);
 		Assert(waitProc->resSlotId == InvalidSlotId);
 
-		initSlot(&pResGroupControl->slots[slotId], &group->caps, waitProc->mppSessionId);
+		initSlot(&pResGroupControl->slots[slotId], &group->caps,
+				group->groupId, waitProc->mppSessionId);
 		waitProc->resWaiting = false;
 		waitProc->resSlotId = slotId;
 		SetLatch(&waitProc->procLatch);
@@ -1867,7 +1889,8 @@ ResGroupSlotRelease(void)
 		Assert(waitProc->resWaiting != false);
 		Assert(waitProc->resSlotId == InvalidSlotId);
 
-		initSlot(&pResGroupControl->slots[slotId], &group->caps, waitProc->mppSessionId);
+		initSlot(&pResGroupControl->slots[slotId], &group->caps,
+				group->groupId, waitProc->mppSessionId);
 		waitProc->resSlotId = slotId;	/* pass the slot to new query */
 		waitProc->resWaiting = false;
 		SetLatch(&waitProc->procLatch);
@@ -2114,6 +2137,11 @@ SwitchResGroupOnSegment(const char *buf, int len)
 		return;
 	}
 
+	if (!slotIdIsValid(newSlotId))
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("Slot id %d is beyond the boundary [0, %d].", newSlotId, RESGROUP_MAX_SLOTS - 1)));
+
 	if (self->groupId != InvalidOid)
 	{
 		/* it's not the first dispatch in the same transaction */
@@ -2145,9 +2173,7 @@ SwitchResGroupOnSegment(const char *buf, int len)
 	}
 	else
 	{
-		Assert(slot->groupId == InvalidOid);
-		slot->groupId = newGroupId;
-		initSlot(slot, &caps, gp_session_id);
+		initSlot(slot, &caps, newGroupId, gp_session_id);
 		group->nRunning++;
 	}
 	selfAttachToSlot(group, slot);
@@ -2685,6 +2711,24 @@ procIsInWaitQueue(const PGPROC *proc)
 	/* TODO: verify that proc is really in the queue in debug mode */
 
 	return proc->links.next != INVALID_OFFSET;
+}
+
+/*
+ * Check whether slot is in use.
+ */
+static bool
+slotIsInUse(const ResGroupSlotData *slot)
+{
+	return slot->groupId != InvalidOid;
+}
+
+/*
+ * Check a slot id is valid.
+ */
+static bool
+slotIdIsValid(int slotId)
+{
+	return (slotId >= 0 && slotId < RESGROUP_MAX_SLOTS);
 }
 
 #ifdef USE_ASSERT_CHECKING
