@@ -219,6 +219,7 @@ static void selfAttachToSlot(ResGroupData *group, ResGroupSlotData *slot);
 static void selfDetachSlot(ResGroupData *group, ResGroupSlotData *slot);
 static int slotPoolAlloc(void);
 static void slotPoolFree(int slotId);
+static void slotPoolInitSlot(int slotId, int next);
 static int getSlot(ResGroupData *group);
 static void putSlot(void);
 static void ResGroupSlotAcquire(void);
@@ -343,8 +344,8 @@ ResGroupControlInit(void)
 
 	MemSet(pResGroupControl->slots, 0, slots_size);
 	for (i = 0; i < RESGROUP_MAX_SLOTS - 1; i++)
-		pResGroupControl->slots[i].next = i + 1;
-	pResGroupControl->slots[RESGROUP_MAX_SLOTS - 1].next = InvalidSlotId;
+		slotPoolInitSlot(i, i + 1);
+	slotPoolInitSlot(RESGROUP_MAX_SLOTS - 1, InvalidSlotId);
 
 	pResGroupControl->freeSlot = 0;
 
@@ -1233,6 +1234,19 @@ slotPoolFree(int slotId)
 	slot->groupId = InvalidOid;
 	slot->next = pResGroupControl->freeSlot;
 	pResGroupControl->freeSlot = slotId;
+}
+
+/*
+ * Initialize slot when initializing slot pool
+ */
+static void
+slotPoolInitSlot(int slotId, int next)
+{
+	ResGroupSlotData *slot;
+
+	slot = &pResGroupControl->slots[slotId];
+	slot->next = next;
+	slot->groupId = InvalidOid;
 }
 
 /*
