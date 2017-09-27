@@ -105,13 +105,13 @@ struct ResGroupProcData
 struct ResGroupSlotData
 {
 	int				sessionId;
+	Oid				groupId;
 
 	ResGroupCaps	caps;
 
 	int32			memQuota;	/* memory quota of current slot */
 	int32			memUsage;	/* total memory usage of procs belongs to this slot */
 	int				nProcs;		/* number of procs in this slot */
-	bool			inUse;
 	int				next;		/* next free slot in free list */
 };
 
@@ -217,7 +217,7 @@ static void groupDecMemUsage(ResGroupData *group,
 static void initSlot(ResGroupSlotData *slot, ResGroupCaps *caps, int sessionId);
 static void selfAttachToSlot(ResGroupData *group, ResGroupSlotData *slot);
 static void selfDetachSlot(ResGroupData *group, ResGroupSlotData *slot);
-static int getFreeSlot(void);
+static int getFreeSlot(ResGroupData *group);
 static int getSlot(ResGroupData *group);
 static void putSlot(void);
 static void ResGroupSlotAcquire(void);
@@ -1182,7 +1182,7 @@ selfDetachSlot(ResGroupData *group, ResGroupSlotData *slot)
 static void
 initSlot(ResGroupSlotData *slot, ResGroupCaps *caps, int sessionId)
 {
-	Assert(slot->inUse);
+	Assert(slot->groupId != InvalidOid);
 
 	slot->sessionId = sessionId;
 	slot->caps = *caps;
@@ -1192,10 +1192,10 @@ initSlot(ResGroupSlotData *slot, ResGroupCaps *caps, int sessionId)
 /*
  * Get a free resource group slot.
  *
- * A free resource group slot has inUse == false, no other information is checked.
+ * A free resource group slot has groupId == InvalidOid, no other information is checked.
  */
 static int
-getFreeSlot(void)
+getFreeSlot(ResGroupData *group)
 {
 	int ret;
 
@@ -1207,8 +1207,8 @@ getFreeSlot(void)
 
 	pResGroupControl->freeSlot = pResGroupControl->slots[ret].next;
 
-	Assert(!pResGroupControl->slots[ret].inUse);
-	pResGroupControl->slots[ret].inUse = true;
+	Assert(pResGroupControl->slots[ret].groupId == InvalidOid);
+	pResGroupControl->slots[ret].groupId = group->groupId;
 
 	return ret;
 }
@@ -1220,7 +1220,7 @@ getFreeSlot(void)
  * available and the concurrency limit is not reached.
  *
  * On success the memory quota is marked as granted, nRunning is increased
- * and the slot's inUse flag is also set, the slot id is returned.
+ * and the slot's groupId is also set accordingly, the slot id is returned.
  *
  * On failure nothing is changed and InvalidSlotId is returned.
  */
@@ -1266,7 +1266,7 @@ getSlot(ResGroupData *group)
 	}
 
 	/* Now actually get a free slot */
-	slotId = getFreeSlot();
+	slotId = getFreeSlot(group);
 	Assert(slotId != InvalidSlotId);
 
 	group->nRunning++;
@@ -1299,7 +1299,7 @@ putSlot(void)
 
 	selfUnsetSlot();
 
-	Assert(slot->inUse);
+	Assert(slot->groupId != InvalidOid);
 
 	/* Return the memory quota granted to this slot */
 #ifdef USE_ASSERT_CHECKING
@@ -1313,8 +1313,8 @@ putSlot(void)
 	if (shouldWakeUp)
 		wakeupGroups(group->groupId);
 
-	/* Mark the slot as free */
-	slot->inUse = false;
+	/* Return the slot back to free list */
+	slot->groupId = InvalidOid;
 	slot->next = pResGroupControl->freeSlot;
 	pResGroupControl->freeSlot = slotId;
 
@@ -2071,8 +2071,8 @@ UnassignResGroup(void)
 			/* Release the slot memory */
 			groupReleaseMemQuota(group, slot);
 
-			/* Mark the slot as free */
-			slot->inUse = false;
+			/* Mark the group id in slot as invalid */
+			slot->groupId = InvalidOid;
 
 			/* And finally decrease nRunning */
 			group->nRunning--;
@@ -2145,8 +2145,8 @@ SwitchResGroupOnSegment(const char *buf, int len)
 	}
 	else
 	{
-		Assert(!slot->inUse);
-		slot->inUse = true;
+		Assert(slot->groupId == InvalidOid);
+		slot->groupId = newGroupId;
 		initSlot(slot, &caps, gp_session_id);
 		group->nRunning++;
 	}
