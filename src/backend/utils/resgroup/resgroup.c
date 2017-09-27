@@ -1194,6 +1194,7 @@ initSlot(ResGroupSlotData *slot, ResGroupCaps *caps, Oid groupId, int sessionId)
 	slot->memQuota = slotGetMemQuotaExpected(caps);
 	slot->memUsage = 0;
 }
+
 /*
  * Alloc a slot from shared slot pool
  */
@@ -1214,6 +1215,8 @@ slotPoolAlloc(void)
 	slot = &pResGroupControl->slots[ret];
 	Assert(!slotIsInUse(slot));
 	pResGroupControl->freeSlot = slot->next;
+
+	slot->next = InvalidSlotId;
 
 	return ret;
 }
