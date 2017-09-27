@@ -3724,7 +3724,7 @@ struct config_int ConfigureNamesInt_gp[] =
 			NULL
 		},
 		&MaxResourceGroups,
-		9, 0, INT_MAX, gpvars_assign_max_resource_groups, NULL
+		9, 0, 100, NULL, NULL
 	},
 
 	{
