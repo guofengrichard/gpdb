@@ -2594,12 +2594,12 @@ uint64 SPI_GetMemoryReservation(void)
 }
 
 /**
- * Is there memory reserved for SPI calls
+ * Is memory reserved stack empty?
  */
 bool SPI_IsMemoryReserved(void)
 {
 	Assert(!IsResManagerMemoryPolicyNone());
-	return (SPIMemReserved != 0);
+	return (SPIMemReserved == 0);
 }
 
 /**
