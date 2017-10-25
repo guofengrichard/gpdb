@@ -142,9 +142,9 @@ struct ResGroupSlotData
 struct ResGroupData
 {
 	Oid			groupId;		/* Id for this group */
-	ResGroupCaps	caps;
+	ResGroupCaps	caps;		/* capabilities of this group */
 	int			nRunning;		/* number of running trans */
-	PROC_QUEUE	waitProcs;
+	PROC_QUEUE	waitProcs;		/* list of PGPROC objects waiting on this group */
 	int			totalExecuted;	/* total number of executed trans */
 	int			totalQueued;	/* total number of queued trans	*/
 	Interval	totalQueuedTime;/* total queue time */
@@ -846,7 +846,7 @@ ResGroupDumpMemoryInfo(void)
 bool
 ResGroupReserveMemory(int32 memoryChunks, int32 overuseChunks, bool *waiverUsed)
 {
-	int32				overused;
+	int32				overuseMem;
 	ResGroupSlotData	*slot = self->slot;
 	ResGroupData		*group = self->group;
 
@@ -908,10 +908,10 @@ ResGroupReserveMemory(int32 memoryChunks, int32 overuseChunks, bool *waiverUsed)
 	Assert(self->memUsage >= 0);
 
 	/* add memoryChunks into group & slot memory usage */
-	overused = groupIncMemUsage(group, slot, memoryChunks);
+	overuseMem = groupIncMemUsage(group, slot, memoryChunks);
 
 	/* then check whether there is over usage */
-	if (CritSectionCount == 0 && overused > overuseChunks)
+	if (CritSectionCount == 0 && overuseMem > overuseChunks)
 	{
 		/* if the over usage is larger than allowed then revert the change */
 		groupDecMemUsage(group, slot, memoryChunks);
@@ -925,7 +925,7 @@ ResGroupReserveMemory(int32 memoryChunks, int32 overuseChunks, bool *waiverUsed)
 
 		return false;
 	}
-	else if (CritSectionCount == 0 && overused > 0)
+	else if (CritSectionCount == 0 && overuseMem > 0)
 	{
 		/* the over usage is within the allowed threshold */
 		*waiverUsed = true;
@@ -1141,7 +1141,7 @@ groupIncMemUsage(ResGroupData *group, ResGroupSlotData *slot, int32 chunks)
 {
 	int32			slotMemUsage;
 	int32			sharedMemUsage;
-	int32			overused = 0;
+	int32			overuseMem = 0;
 
 	/* Add the chunks to memUsage in slot */
 	slotMemUsage = pg_atomic_add_fetch_u32((pg_atomic_uint32 *) &slot->memUsage,
@@ -1161,14 +1161,14 @@ groupIncMemUsage(ResGroupData *group, ResGroupSlotData *slot, int32 chunks)
 										sharedMemUsage);
 
 		/* Calculate the over used chunks */
-		overused = Max(0, total - group->memSharedGranted);
+		overuseMem = Max(0, total - group->memSharedGranted);
 	}
 
 	/* Add the chunks to memUsage in group */
 	pg_atomic_add_fetch_u32((pg_atomic_uint32 *) &group->memUsage,
 							chunks);
 
-	return overused;
+	return overuseMem;
 }
 
 /*
@@ -1586,13 +1586,13 @@ groupAcquireSlot(ResGroupData *group)
  *
  * currentSharedStocks is 0.5*0.4 = 0.2
  * memQuotaGranted is 0.5*0.6 = 0.3
- * memStocksInuse is 0.5*0.4/10*6 = 0.12
- * memStocksFree is 0.3 - 0.12 = 0.18
+ * memChunksInuse is 0.5*0.4/10*6 = 0.12
+ * memChunksFree is 0.3 - 0.12 = 0.18
  *
  * * memLimit: 0.5 -> 0.4
  *   for memQuotaGranted we could free 0.18 - 0.4*0.6/10*6 = 0.18-0.144 = 0.036
  *       new memQuotaGranted is 0.3-0.036 = 0.264
- *       new memStocksFree is 0.18-0.036 = 0.144
+ *       new memChunksFree is 0.18-0.036 = 0.144
  *   for memShared we could free currentSharedStocks - Max(currentSharedUsage, 0.4*0.4)=0.04
  *       new currentSharedStocks is 0.2-0.04 = 0.16
  *
@@ -1608,21 +1608,21 @@ groupAcquireSlot(ResGroupData *group)
  * * memShared: 0.2 -> 0.6
  *   for memQuotaGranted we could free 0.144 - 0.4*0.4/20*16 = 0.144 - 0.128 = 0.016
  *       new memQuotaGranted is 0.264 - 0.016 = 0.248
- *       new memStocksFree is 0.144 - 0.016 = 0.128
+ *       new memChunksFree is 0.144 - 0.016 = 0.128
  *   for memShared we could free currentSharedUsage - Max(currentSharedUsage, 0.4*0.6) = -0.18
  *
  * * memLimit: 0.4 -> 0.2
  *   for memQuotaGranted we could free 0.128 - 0.2*0.4/20*16 = 0.128 - 0.064 = 0.064
  *       new memQuotaGranted is 0.248-0.064 = 0.184
- *       new memStocksFree is 0.128 - 0.064 = 0.064
+ *       new memChunksFree is 0.128 - 0.064 = 0.064
  *   for memShared we could free currentSharedStocks - Max(currentSharedUsage, 0.2*0.6) = -0.04
  */
 static bool
 groupApplyMemCaps(ResGroupData *group, const ResGroupCaps *caps)
 {
-	int32 memStocksAvailable;
-	int32 memStocksNeeded;
-	int32 memStocksToFree;
+	int32 memChunksAvailable;
+	int32 memChunksNeeded;
+	int32 memChunksToFree;
 	int32 memSharedNeeded;
 	int32 memSharedToFree;
 
@@ -1630,36 +1630,36 @@ groupApplyMemCaps(ResGroupData *group, const ResGroupCaps *caps)
 
 	group->memExpected = groupGetMemExpected(caps);
 
-	/* memStocksAvailable is the total free non-shared quota */
-	memStocksAvailable = group->memQuotaGranted - group->memQuotaUsed;
+	/* memChunksAvailable is the total free non-shared quota */
+	memChunksAvailable = group->memQuotaGranted - group->memQuotaUsed;
 
 	if (caps->concurrency.proposed > group->nRunning)
 	{
 		/*
-		 * memStocksNeeded is the total non-shared quota needed
+		 * memChunksNeeded is the total non-shared quota needed
 		 * by all the free slots
 		 */
-		memStocksNeeded = slotGetMemQuotaExpected(caps) *
+		memChunksNeeded = slotGetMemQuotaExpected(caps) *
 			(caps->concurrency.proposed - group->nRunning);
 
 		/*
-		 * if memStocksToFree > 0 then we can safely release these
+		 * if memChunksToFree > 0 then we can safely release these
 		 * non-shared quota and still have enough quota to run
 		 * all the free slots.
 		 */
-		memStocksToFree = memStocksAvailable - memStocksNeeded;
+		memChunksToFree = memChunksAvailable - memChunksNeeded;
 	}
 	else
 	{
-		memStocksToFree = Min(memStocksAvailable,
+		memChunksToFree = Min(memChunksAvailable,
 							  group->memQuotaGranted - groupGetMemQuotaExpected(caps));
 	}
 
 	/* TODO: optimize the free logic */
-	if (memStocksToFree > 0)
+	if (memChunksToFree > 0)
 	{
-		mempoolRelease(group->groupId, memStocksToFree);
-		group->memQuotaGranted -= memStocksToFree;
+		mempoolRelease(group->groupId, memChunksToFree);
+		group->memQuotaGranted -= memChunksToFree;
 	}
 
 	memSharedNeeded = Max(group->memSharedUsage,
@@ -1688,7 +1688,7 @@ groupApplyMemCaps(ResGroupData *group, const ResGroupCaps *caps)
 	 */
 	mempoolAutoReserve(group, caps);
 #endif
-	return (memStocksToFree > 0 || memSharedToFree > 0);
+	return (memChunksToFree > 0 || memSharedToFree > 0);
 }
 
 /*
@@ -2110,7 +2110,17 @@ DeserializeResGroupInfo(struct ResGroupCaps *capsOut,
 }
 
 /*
- * Check whether should assign resource group on master.
+ * Check whether resource group should be assigned on master.
+ *
+ * Resource group will not be assigned if we are in SIGUSR1 handler.
+ * This is to avoid the deadlock situation cased by the following scenario:
+ *
+ * Suppose backend A starts a transaction and acquires the LAST slot in resource
+ * group G. Then backend A signals other backends who need a catchup interrupt.
+ * Suppose backend B receives the signal and wants to respond to catchup event.
+ * If backend B is assigned the same resource group G and tries to acquire a slot,
+ * it will hang. Backend A will also hang because it is waiting for backend B to
+ * catch up and free its space in the global SI message queue.
  */
 bool
 ShouldAssignResGroupOnMaster(void)
@@ -2122,7 +2132,8 @@ ShouldAssignResGroupOnMaster(void)
 }
 
 /*
- * UnassignResGroup() is called on both master and segments
+ * Check whether resource group should be un-assigned.
+ * This will be called on both master and segments.
  */
 bool
 ShouldUnassignResGroup(void)
@@ -2355,7 +2366,11 @@ ResGroupWait(ResGroupData *group)
 
 	pgstat_report_resgroup(GetCurrentTimestamp(), group->groupId);
 
-	/* similar to lockAwaited in ProcSleep for interrupt cleanup */
+	/*
+	 * Mark that we are waiting on resource group
+	 *
+	 * This is used for interrupt cleanup, similar to lockAwaited in ProcSleep
+	 */
 	localResWaiting = true;
 
 	/*
@@ -3131,7 +3146,10 @@ groupWaitQueueIsEmpty(const ResGroupData *group)
 }
 
 /*
- * Currently, only SET/SHOW command can be bypassed
+ * Parse the query and check if this query should
+ * bypass the management of resource group.
+ *
+ * Currently, only SET/RESET/SHOW command can be bypassed
  */
 static bool
 shouldBypassQuery(const char* query_string)
@@ -3156,7 +3174,7 @@ shouldBypassQuery(const char* query_string)
 	if (parsetree_list == NULL)
 		return false;
 
-	/* Only bypass SET/SHOW command for now */
+	/* Only bypass SET/RESET/SHOW command for now */
 	foreach(parsetree_item, parsetree_list)
 	{
 		parsetree = (Node *) lfirst(parsetree_item);
