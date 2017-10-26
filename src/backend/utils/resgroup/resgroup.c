@@ -2539,6 +2539,8 @@ ResGroupWaitCancel(void)
 	/* We are sure to be interrupted in the for loop of ResGroupWait now */
 	LWLockAcquire(ResGroupLock, LW_EXCLUSIVE);
 
+	Assert(!selfHasSlot());
+
 	if (procIsInWaitQueue(MyProc))
 	{
 		/* Still waiting on the queue when get interrupted, remove myself from the queue */
@@ -2547,9 +2549,6 @@ ResGroupWaitCancel(void)
 		Assert(!groupWaitQueueIsEmpty(group));
 		Assert(procIsWaiting(MyProc));
 		Assert(selfHasGroup());
-		Assert(!selfHasSlot());
-
-		addTotalQueueDuration(group);
 
 		groupWaitQueueErase(group, MyProc);
 	}
@@ -2559,7 +2558,6 @@ ResGroupWaitCancel(void)
 
 		Assert(!procIsInWaitQueue(MyProc));
 		Assert(selfIsAssignedValidGroup());
-		Assert(!selfHasSlot());
 
 		/* First complete the slot's transfer from MyProc to self */
 		slot = MyProc->resSlot;
@@ -2574,7 +2572,6 @@ ResGroupWaitCancel(void)
 		Assert(sessionGetSlot() == NULL);
 
 		group->totalExecuted++;
-		addTotalQueueDuration(group);
 	}
 	else
 	{
@@ -2583,10 +2580,11 @@ ResGroupWaitCancel(void)
 		 * groupAcquireSlot will do the retry.
 		 */
 		Assert(!procIsInWaitQueue(MyProc));
-		Assert(!selfHasSlot());
 	}
 
+	addTotalQueueDuration(group);
 	LWLockRelease(ResGroupLock);
+
 	localResWaiting = false;
 	pgstat_report_waiting(PGBE_WAITING_NONE);
 	selfUnsetGroup();
