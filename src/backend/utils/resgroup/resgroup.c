@@ -2338,8 +2338,6 @@ SwitchResGroupOnSegment(const char *buf, int len)
 	selfAttachToSlot(group, slot);
 	Assert(selfHasSlot());
 
-	ResGroupSetMemorySpillRatio(&caps);
-
 	mempoolAutoReserve(group, &caps);
 	LWLockRelease(ResGroupLock);
 
