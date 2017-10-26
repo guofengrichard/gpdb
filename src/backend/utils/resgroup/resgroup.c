@@ -223,13 +223,13 @@ static void wakeupSlots(ResGroupData *group, bool grant);
 static void wakeupGroups(Oid skipGroupId);
 static bool mempoolAutoRelease(ResGroupData *group, ResGroupSlotData *slot);
 static void mempoolAutoReserve(ResGroupData *group, const ResGroupCaps *caps);
-static ResGroupData *ResGroupHashNew(Oid groupId);
-static ResGroupData *ResGroupHashFind(Oid groupId, bool raise);
-static void ResGroupHashRemove(Oid groupId);
-static void ResGroupWait(ResGroupData *group);
-static ResGroupData *ResGroupCreate(Oid groupId, const ResGroupCaps *caps);
-static void AtProcExit_ResGroup(int code, Datum arg);
-static void ResGroupWaitCancel(void);
+static ResGroupData *groupHashNew(Oid groupId);
+static ResGroupData *groupHashFind(Oid groupId, bool raise);
+static void groupHashRemove(Oid groupId);
+static void waitOnGroup(ResGroupData *group);
+static ResGroupData *createGroup(Oid groupId, const ResGroupCaps *caps);
+static void atProcExit_ResGroup(int code, Datum arg);
+static void groupWaitCancel(void);
 static bool groupReserveMemQuota(ResGroupData *group);
 static void groupReleaseMemQuota(ResGroupData *group, ResGroupSlotData *slot);
 static int32 groupIncMemUsage(ResGroupData *group,
@@ -252,8 +252,8 @@ static ResGroupData *decideResGroup(void);
 static ResGroupSlotData *groupAcquireSlot(ResGroupData *group);
 static void groupReleaseSlot(ResGroupData *group, ResGroupSlotData *slot);
 static void addTotalQueueDuration(ResGroupData *group);
-static void ResGroupSetMemorySpillRatio(const ResGroupCaps *caps);
-static char* DumpResGroupMemUsage(ResGroupData *group);
+static void groupSetMemorySpillRatio(const ResGroupCaps *caps);
+static char* groupDumpMemUsage(ResGroupData *group);
 static void selfValidateResGroupInfo(void);
 static bool selfIsAssignedDroppedGroup(void);
 static bool selfIsAssignedValidGroup(void);
@@ -399,7 +399,7 @@ AllocResGroupEntry(Oid groupId, const ResGroupOpts *opts)
 	LWLockAcquire(ResGroupLock, LW_EXCLUSIVE);
 
 	ResGroupOptsToCaps(opts, &caps);
-	group = ResGroupCreate(groupId, &caps);
+	group = createGroup(groupId, &caps);
 	Assert(group != NULL);
 
 	LWLockRelease(ResGroupLock);
@@ -429,7 +429,7 @@ InitResGroups(void)
 	if (Gp_role == GP_ROLE_DISPATCH && GpIdentity.segindex != MASTER_CONTENT_ID)
 		return;
 
-	on_shmem_exit(AtProcExit_ResGroup, 0);
+	on_shmem_exit(atProcExit_ResGroup, 0);
 	if (pResGroupControl->loaded)
 		return;
 	/*
@@ -461,7 +461,7 @@ InitResGroups(void)
 	if (pResGroupControl->loaded)
 		goto exit;
 
-	/* These initialization must be done before ResGroupCreate() */
+	/* These initialization must be done before createGroup() */
 	decideTotalChunks(&pResGroupControl->totalChunks, &pResGroupControl->chunkSizeInBits);
 	pResGroupControl->freeChunks = pResGroupControl->totalChunks;
 	if (pResGroupControl->totalChunks == 0)
@@ -483,7 +483,7 @@ InitResGroups(void)
 		GetResGroupCapabilities(groupId, &caps);
 		cpuRateLimit = caps.cpuRateLimit.value;
 
-		group = ResGroupCreate(groupId, &caps);
+		group = createGroup(groupId, &caps);
 		Assert(group != NULL);
 
 		ResGroupOps_CreateGroup(groupId);
@@ -521,7 +521,7 @@ ResGroupCheckForDrop(Oid groupId, char *name)
 
 	LWLockAcquire(ResGroupLock, LW_EXCLUSIVE);
 
-	group = ResGroupHashFind(groupId, true);
+	group = groupHashFind(groupId, true);
 
 	if (group->nRunning > 0)
 	{
@@ -564,14 +564,14 @@ ResGroupDropFinish(Oid groupId, bool isCommit)
 
 		if (Gp_role == GP_ROLE_DISPATCH)
 		{
-			group = ResGroupHashFind(groupId, true);
+			group = groupHashFind(groupId, true);
 			wakeupSlots(group, false);
 			unlockResGroupForDrop(group);
 		}
 
 		if (isCommit)
 		{
-			ResGroupHashRemove(groupId);
+			groupHashRemove(groupId);
 			ResGroupOps_DestroyGroup(groupId);
 		}
 	}
@@ -608,7 +608,7 @@ ResGroupCreateOnAbort(Oid groupId)
 	PG_TRY();
 	{
 		savedInterruptHoldoffCount = InterruptHoldoffCount;
-		ResGroupHashRemove(groupId);
+		groupHashRemove(groupId);
 		/* remove the os dependent part for this resource group */
 		ResGroupOps_DestroyGroup(groupId);
 	}
@@ -648,7 +648,7 @@ ResGroupAlterOnCommit(Oid groupId,
 	PG_TRY();
 	{
 		savedInterruptHoldoffCount = InterruptHoldoffCount;
-		group = ResGroupHashFind(groupId, true);
+		group = groupHashFind(groupId, true);
 
 		group->caps = *caps;
 
@@ -719,7 +719,7 @@ ResGroupGetStat(Oid groupId, ResGroupStatType type)
 
 	LWLockAcquire(ResGroupLock, LW_SHARED);
 
-	group = ResGroupHashFind(groupId, true);
+	group = groupHashFind(groupId, true);
 
 	switch (type)
 	{
@@ -739,7 +739,7 @@ ResGroupGetStat(Oid groupId, ResGroupStatType type)
 			result = IntervalPGetDatum(&group->totalQueuedTime);
 			break;
 		case RES_GROUP_STAT_MEM_USAGE:
-			result = CStringGetDatum(DumpResGroupMemUsage(group));
+			result = CStringGetDatum(groupDumpMemUsage(group));
 			break;
 		default:
 			ereport(ERROR,
@@ -753,7 +753,7 @@ ResGroupGetStat(Oid groupId, ResGroupStatType type)
 }
 
 static char*
-DumpResGroupMemUsage(ResGroupData *group)
+groupDumpMemUsage(ResGroupData *group)
 {
 	int32 slotUsage;
 	StringInfoData memUsage;
@@ -1005,7 +1005,7 @@ ResGroupDecideConcurrencyCaps(Oid groupId,
 
 	LWLockAcquire(ResGroupLock, LW_SHARED);
 
-	group = ResGroupHashFind(groupId, true);
+	group = groupHashFind(groupId, true);
 
 	/*
 	 * If the runtime usage information doesn't exceed the new setting
@@ -1052,7 +1052,7 @@ ResGroupDecideMemoryCaps(int groupId,
 
 	LWLockAcquire(ResGroupLock, LW_SHARED);
 
-	group = ResGroupHashFind(groupId, true);
+	group = groupHashFind(groupId, true);
 
 	ResGroupOptsToCaps(opts, &capsNew);
 	/*
@@ -1091,14 +1091,14 @@ ResourceGroupGetQueryMemoryLimit(void)
 }
 
 /*
- * ResGroupCreate -- initialize the elements for a resource group.
+ * createGroup -- initialize the elements for a resource group.
  *
  * Notes:
  *	It is expected that the appropriate lightweight lock is held before
  *	calling this - unless we are the startup process.
  */
 static ResGroupData *
-ResGroupCreate(Oid groupId, const ResGroupCaps *caps)
+createGroup(Oid groupId, const ResGroupCaps *caps)
 {
 	ResGroupData	*group;
 	int32			chunks;
@@ -1106,7 +1106,7 @@ ResGroupCreate(Oid groupId, const ResGroupCaps *caps)
 	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
 	Assert(OidIsValid(groupId));
 
-	group = ResGroupHashNew(groupId);
+	group = groupHashNew(groupId);
 	Assert(group != NULL);
 
 	group->groupId = groupId;
@@ -1479,12 +1479,12 @@ decideResGroup(void)
 	groupId = decideResGroupId();
 
 	LWLockAcquire(ResGroupLock, LW_SHARED);
-	group = ResGroupHashFind(groupId, false);
+	group = groupHashFind(groupId, false);
 
 	if (!group)
 	{
 		groupId = superuser() ? ADMINRESGROUP_OID : DEFAULTRESGROUP_OID;
-		group = ResGroupHashFind(groupId, false);
+		group = groupHashFind(groupId, false);
 	}
 
 	Assert(group != NULL);
@@ -1548,7 +1548,7 @@ groupAcquireSlot(ResGroupData *group)
 	 * if i am waken up by DROP RESOURCE GROUP statement, the
 	 * resSlot will be NULL.
 	 */
-	ResGroupWait(group);
+	waitOnGroup(group);
 
 	if (MyProc->resSlot == NULL)
 		return NULL;
@@ -2200,7 +2200,7 @@ retry:
 		ResGroupOps_AssignGroup(self->groupId, MyProcPid);
 
 		/* Set spill guc */
-		ResGroupSetMemorySpillRatio(&slot->caps);
+		groupSetMemorySpillRatio(&slot->caps);
 	}
 	PG_CATCH();
 	{
@@ -2307,7 +2307,7 @@ SwitchResGroupOnSegment(const char *buf, int len)
 	}
 
 	LWLockAcquire(ResGroupLock, LW_EXCLUSIVE);
-	group = ResGroupHashFind(newGroupId, true);
+	group = groupHashFind(newGroupId, true);
 	Assert(group != NULL);
 
 	/* Init self */
@@ -2355,7 +2355,7 @@ SwitchResGroupOnSegment(const char *buf, int len)
  * Wait on the queue of resource group
  */
 static void
-ResGroupWait(ResGroupData *group)
+waitOnGroup(ResGroupData *group)
 {
 	PGPROC *proc = MyProc;
 
@@ -2391,7 +2391,7 @@ ResGroupWait(ResGroupData *group)
 	}
 	PG_CATCH();
 	{
-		ResGroupWaitCancel();
+		groupWaitCancel();
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
@@ -2402,14 +2402,14 @@ ResGroupWait(ResGroupData *group)
 }
 
 /*
- * ResGroupHashNew -- return a new (empty) group object to initialize.
+ * groupHashNew -- return a new (empty) group object to initialize.
  *
  * Notes
  *	The resource group lightweight lock (ResGroupLock) *must* be held for
  *	this operation.
  */
 static ResGroupData *
-ResGroupHashNew(Oid groupId)
+groupHashNew(Oid groupId)
 {
 	int			i;
 	bool		found;
@@ -2435,7 +2435,7 @@ ResGroupHashNew(Oid groupId)
 }
 
 /*
- * ResGroupHashFind -- return the group for a given oid.
+ * groupHashFind -- return the group for a given oid.
  *
  * If the group cannot be found, then NULL is returned if 'raise' is false,
  * otherwise an exception is thrown.
@@ -2445,7 +2445,7 @@ ResGroupHashNew(Oid groupId)
  *	this operation.
  */
 static ResGroupData *
-ResGroupHashFind(Oid groupId, bool raise)
+groupHashFind(Oid groupId, bool raise)
 {
 	bool				found;
 	ResGroupHashEntry	*entry;
@@ -2470,7 +2470,7 @@ ResGroupHashFind(Oid groupId, bool raise)
 
 
 /*
- * ResGroupHashRemove -- remove the group for a given oid.
+ * groupHashRemove -- remove the group for a given oid.
  *
  * If the group cannot be found then an exception is thrown.
  *
@@ -2479,7 +2479,7 @@ ResGroupHashFind(Oid groupId, bool raise)
  *	this operation.
  */
 static void
-ResGroupHashRemove(Oid groupId)
+groupHashRemove(Oid groupId)
 {
 	bool		found;
 	ResGroupHashEntry	*entry;
@@ -2507,9 +2507,9 @@ ResGroupHashRemove(Oid groupId)
 
 /* Process exit without waiting for slot or received SIGTERM */
 static void
-AtProcExit_ResGroup(int code, Datum arg)
+atProcExit_ResGroup(int code, Datum arg)
 {
-	ResGroupWaitCancel();
+	groupWaitCancel();
 }
 
 /*
@@ -2525,7 +2525,7 @@ AtProcExit_ResGroup(int code, Datum arg)
  * ResGroupData entry may have been removed if the DROP is committed.
  */
 static void
-ResGroupWaitCancel(void)
+groupWaitCancel(void)
 {
 	ResGroupData		*group;
 	ResGroupSlotData	*slot;
@@ -2534,7 +2534,7 @@ ResGroupWaitCancel(void)
 	if (!selfHasGroup() || !localResWaiting)
 		return;
 
-	/* We are sure to be interrupted in the for loop of ResGroupWait now */
+	/* We are sure to be interrupted in the for loop of waitOnGroup now */
 	LWLockAcquire(ResGroupLock, LW_EXCLUSIVE);
 
 	Assert(!selfHasSlot());
@@ -2589,7 +2589,7 @@ ResGroupWaitCancel(void)
 }
 
 static void
-ResGroupSetMemorySpillRatio(const ResGroupCaps *caps)
+groupSetMemorySpillRatio(const ResGroupCaps *caps)
 {
 	char value[64];
 
