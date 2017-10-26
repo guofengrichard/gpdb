@@ -1479,7 +1479,7 @@ decideResGroup(void)
 	/* always find out the up-to-date resgroup id */
 	groupId = decideResGroupId();
 
-	LWLockAcquire(ResGroupLock, LW_EXCLUSIVE);
+	LWLockAcquire(ResGroupLock, LW_SHARED);
 	group = ResGroupHashFind(groupId, false);
 
 	if (!group)
