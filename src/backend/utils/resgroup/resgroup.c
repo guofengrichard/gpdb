@@ -1529,8 +1529,8 @@ groupAcquireSlot(ResGroupData *group)
 			/* got one, lucky */
 			initSlot(slot, &group->caps, group->groupId, gp_session_id);
 			group->totalExecuted++;
-			pgstat_report_resgroup(0, group->groupId);
 			LWLockRelease(ResGroupLock);
+			pgstat_report_resgroup(0, group->groupId);
 			return slot;
 		}
 	}
@@ -2268,6 +2268,8 @@ UnassignResGroup(void)
 	/* Cleanup group */
 	selfUnsetGroup();
 	LWLockRelease(ResGroupLock);
+
+	pgstat_report_resgroup(0, InvalidOid);
 
 	Assert(selfIsUnassigned());
 }
