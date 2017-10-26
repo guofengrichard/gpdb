@@ -1866,6 +1866,8 @@ slotGetMemSpill(const ResGroupCaps *caps)
 static void
 wakeupSlots(ResGroupData *group, bool grant)
 {
+	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
+
 	while (!groupWaitQueueIsEmpty(group))
 	{
 		PGPROC		*waitProc;
@@ -2226,6 +2228,7 @@ UnassignResGroup(void)
 	}
 
 	Assert(selfIsAssignedValidGroup());
+	Assert(selfHasSlot());
 
 	/* Stop memory limit checking */
 	self->doMemCheck = false;
