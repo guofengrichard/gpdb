@@ -1426,7 +1426,6 @@ groupReserveMemQuota(ResGroupData *group)
 	}
 
 	group->memQuotaUsed += slotMemQuota;
-	Assert(group->memQuotaUsed <= group->memQuotaGranted);
 
 	return true;
 }
@@ -2171,7 +2170,6 @@ AssignResGroupOnMaster(void)
 	{
 retry:
 		group = decideResGroup();
-		Assert(selfIsAssignedValidGroup());
 
 		/* Acquire slot */
 		slot = groupAcquireSlot(group);
@@ -2930,7 +2928,6 @@ slotValidate(const ResGroupSlotData *slot)
 	if (slot->groupId == InvalidOid)
 	{
 		Assert(slot->sessionId == InvalidSessionId);
-		Assert(slot->groupId == InvalidOid);
 		Assert(slot->nProcs == 0);
 		Assert(slot->memQuota < 0);
 		Assert(slot->memUsage == 0);
