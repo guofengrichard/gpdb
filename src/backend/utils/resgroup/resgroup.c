@@ -228,7 +228,7 @@ static ResGroupData *groupHashFind(Oid groupId, bool raise);
 static void groupHashRemove(Oid groupId);
 static void waitOnGroup(ResGroupData *group);
 static ResGroupData *createGroup(Oid groupId, const ResGroupCaps *caps);
-static void atProcExit_ResGroup(int code, Datum arg);
+static void AtProcExit_ResGroup(int code, Datum arg);
 static void groupWaitCancel(void);
 static bool groupReserveMemQuota(ResGroupData *group);
 static void groupReleaseMemQuota(ResGroupData *group, ResGroupSlotData *slot);
@@ -429,7 +429,7 @@ InitResGroups(void)
 	if (Gp_role == GP_ROLE_DISPATCH && GpIdentity.segindex != MASTER_CONTENT_ID)
 		return;
 
-	on_shmem_exit(atProcExit_ResGroup, 0);
+	on_shmem_exit(AtProcExit_ResGroup, 0);
 	if (pResGroupControl->loaded)
 		return;
 	/*
@@ -1619,9 +1619,9 @@ groupAcquireSlot(ResGroupData *group)
 static bool
 groupApplyMemCaps(ResGroupData *group, const ResGroupCaps *caps)
 {
-	int32 memChunksAvailable;
-	int32 memChunksNeeded;
-	int32 memChunksToFree;
+	int32 memQuotaAvailable;
+	int32 memQuotaNeeded;
+	int32 memQuotaToFree;
 	int32 memSharedNeeded;
 	int32 memSharedToFree;
 
@@ -1629,36 +1629,36 @@ groupApplyMemCaps(ResGroupData *group, const ResGroupCaps *caps)
 
 	group->memExpected = groupGetMemExpected(caps);
 
-	/* memChunksAvailable is the total free non-shared quota */
-	memChunksAvailable = group->memQuotaGranted - group->memQuotaUsed;
+	/* memQuotaAvailable is the total free non-shared quota */
+	memQuotaAvailable = group->memQuotaGranted - group->memQuotaUsed;
 
 	if (caps->concurrency.proposed > group->nRunning)
 	{
 		/*
-		 * memChunksNeeded is the total non-shared quota needed
+		 * memQuotaNeeded is the total non-shared quota needed
 		 * by all the free slots
 		 */
-		memChunksNeeded = slotGetMemQuotaExpected(caps) *
+		memQuotaNeeded = slotGetMemQuotaExpected(caps) *
 			(caps->concurrency.proposed - group->nRunning);
 
 		/*
-		 * if memChunksToFree > 0 then we can safely release these
+		 * if memQuotaToFree > 0 then we can safely release these
 		 * non-shared quota and still have enough quota to run
 		 * all the free slots.
 		 */
-		memChunksToFree = memChunksAvailable - memChunksNeeded;
+		memQuotaToFree = memQuotaAvailable - memQuotaNeeded;
 	}
 	else
 	{
-		memChunksToFree = Min(memChunksAvailable,
+		memQuotaToFree = Min(memQuotaAvailable,
 							  group->memQuotaGranted - groupGetMemQuotaExpected(caps));
 	}
 
 	/* TODO: optimize the free logic */
-	if (memChunksToFree > 0)
+	if (memQuotaToFree > 0)
 	{
-		mempoolRelease(group->groupId, memChunksToFree);
-		group->memQuotaGranted -= memChunksToFree;
+		mempoolRelease(group->groupId, memQuotaToFree);
+		group->memQuotaGranted -= memQuotaToFree;
 	}
 
 	memSharedNeeded = Max(group->memSharedUsage,
@@ -1687,7 +1687,7 @@ groupApplyMemCaps(ResGroupData *group, const ResGroupCaps *caps)
 	 */
 	mempoolAutoReserve(group, caps);
 #endif
-	return (memChunksToFree > 0 || memSharedToFree > 0);
+	return (memQuotaToFree > 0 || memSharedToFree > 0);
 }
 
 /*
@@ -2509,7 +2509,7 @@ groupHashRemove(Oid groupId)
 
 /* Process exit without waiting for slot or received SIGTERM */
 static void
-atProcExit_ResGroup(int code, Datum arg)
+AtProcExit_ResGroup(int code, Datum arg)
 {
 	groupWaitCancel();
 }
