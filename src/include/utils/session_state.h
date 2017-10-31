@@ -91,7 +91,7 @@ typedef struct SessionState
 	/*
 	 * Resource group per-session slot information.
 	 */
-	struct ResGroupSlotData *resGroupSlot;
+	void *resGroupSlot;
 
 #ifdef USE_ASSERT_CHECKING
 	/* If we modify the sessionId in ProcMppSessionId, this field is turned on */

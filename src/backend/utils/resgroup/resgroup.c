@@ -287,6 +287,7 @@ static void sessionResetSlot(void);
 static bool selfIsAssigned(void);
 static bool selfHasSlot(void);
 static void slotValidate(const ResGroupSlotData *slot);
+static bool slotIsInFreelist(const ResGroupSlotData *slot);
 static bool slotIsInUse(const ResGroupSlotData *slot);
 static bool groupIsNotDropped(const ResGroupData *group);
 #endif /* USE_ASSERT_CHECKING */
@@ -2614,8 +2615,7 @@ ResGroupCapsToOpts(const ResGroupCaps *capsIn, ResGroupOpts *optsOut)
 /*
  * Validate the consistency of the resgroup information in self.
  *
- * This function checks the consistency of (group & groupId),
- * but it does not require slot and group to be both set or unset.
+ * This function checks the consistency of (group & groupId).
  */
 static void
 selfValidateResGroupInfo(void)
@@ -2742,8 +2742,6 @@ selfUnassignDroppedGroup(void)
 #ifdef USE_ASSERT_CHECKING
 /*
  * Check whether self has been set a slot.
- *
- * Consistency will be checked on the slot pointer.
  *
  * We don't check whether a resgroup is set or not.
  */
@@ -2907,7 +2905,7 @@ slotValidate(const ResGroupSlotData *slot)
 	}
 	else
 	{
-		Assert(slot != pResGroupControl->freeSlot);
+		Assert(!slotIsInFreelist(slot));
 		AssertImply(Gp_role == GP_ROLE_EXECUTE, slot == sessionGetSlot());
 		AssertImply(Gp_role == GP_ROLE_EXECUTE, slot->sessionId == gp_session_id);
 	}
@@ -2923,19 +2921,35 @@ slotIsInUse(const ResGroupSlotData *slot)
 
 	return slot->groupId != InvalidOid;
 }
+
+static bool
+slotIsInFreelist(const ResGroupSlotData *slot)
+{
+	ResGroupSlotData *current;
+
+	current = pResGroupControl->freeSlot;
+
+	for ( ; current != NULL; current = current->next)
+	{
+		if (current == slot)
+			return true;
+	}
+
+	return false;
+}
 #endif /* USE_ASSERT_CHECKING */
 
 /*
  * Get the slot id of the given slot.
  *
- * Return InvalidSlotId if slot is NULL or root.
+ * Return InvalidSlotId if slot is NULL.
  */
 static int
 slotGetId(const ResGroupSlotData *slot)
 {
 	int			slotId;
 
-	if (slot == NULL || slot == pResGroupControl->freeSlot)
+	if (slot == NULL)
 		return InvalidSlotId;
 
 	slotId = slot - pResGroupControl->slots;
@@ -3283,12 +3297,12 @@ resgroupDumpSlots(StringInfo str)
 static void
 resgroupDumpFreeSlots(StringInfo str)
 {
-	ResGroupSlotData* root;
+	ResGroupSlotData* head;
 	
-	root = pResGroupControl->freeSlot;
+	head = pResGroupControl->freeSlot;
 	
-	appendStringInfo(str, "\"free_slot_root\":{");
-	appendStringInfo(str, "\"next\":%d", slotGetId(root->next));
+	appendStringInfo(str, "\"free_slot_list\":{");
+	appendStringInfo(str, "\"head\":%d", slotGetId(head));
 	appendStringInfo(str, "}");
 }
 
@@ -3301,7 +3315,7 @@ sessionSetSlot(ResGroupSlotData *slot)
 	Assert(slot != NULL);
 	Assert(MySessionState->resGroupSlot == NULL);
 
-	MySessionState->resGroupSlot = slot;
+	MySessionState->resGroupSlot = (void *) slot;
 }
 
 /*
@@ -3310,7 +3324,7 @@ sessionSetSlot(ResGroupSlotData *slot)
 static ResGroupSlotData *
 sessionGetSlot(void)
 {
-	return MySessionState->resGroupSlot;
+	return (ResGroupSlotData *) MySessionState->resGroupSlot;
 }
 
 /*
