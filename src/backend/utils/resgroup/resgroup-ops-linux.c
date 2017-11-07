@@ -49,6 +49,7 @@
 
 #define PROC_MOUNTS "/proc/self/mounts"
 #define MAX_INT_STRING_LEN 20
+#define CGROUP_TOP_DIR 0
 
 static char * buildPath(Oid group, const char *base, const char *comp, const char *prop, char *path, size_t pathsize);
 static int lockDir(const char *path, bool block);
@@ -167,7 +168,7 @@ unassignGroup(Oid group, const char *comp, int fddir)
 	if (buflen == 0)
 		return;
 
-	buildPath(0, NULL, comp, "cgroup.procs", path, pathsize);
+	buildPath(CGROUP_TOP_DIR, NULL, comp, "cgroup.procs", path, pathsize);
 
 	fdw = open(path, O_WRONLY);
 	__CHECK(fdw >= 0, ( close(fddir) ), "can't open file for write");
@@ -550,8 +551,8 @@ getMemoryInfo(unsigned long *ram, unsigned long *swap)
 static void
 getCgMemoryInfo(uint64 *cgram, uint64 *cgmemsw)
 {
-	*cgram = readInt64(0, "", "memory", "memory.limit_in_bytes");
-	*cgmemsw = readInt64(0, "", "memory", "memory.memsw.limit_in_bytes");
+	*cgram = readInt64(CGROUP_TOP_DIR, "", "memory", "memory.limit_in_bytes");
+	*cgmemsw = readInt64(CGROUP_TOP_DIR, "", "memory", "memory.memsw.limit_in_bytes");
 }
 
 /* get vm.overcommit_ratio */
@@ -628,7 +629,7 @@ ResGroupOps_Bless(void)
 		return;
 
 	detectCgroupMountPoint();
-	checkPermission(0, true);
+	checkPermission(CGROUP_TOP_DIR, true);
 
 	/*
 	 * Put postmaster and all the children processes into the gpdb cgroup,
@@ -660,10 +661,10 @@ ResGroupOps_Init(void)
 	int ncores = getCpuCores();
 	const char *comp = "cpu";
 
-	cfs_period_us = readInt64(0, NULL, comp, "cpu.cfs_period_us");
-	writeInt64(0, NULL, comp, "cpu.cfs_quota_us",
+	cfs_period_us = readInt64(CGROUP_TOP_DIR, NULL, comp, "cpu.cfs_period_us");
+	writeInt64(CGROUP_TOP_DIR, NULL, comp, "cpu.cfs_quota_us",
 			   cfs_period_us * ncores * gp_resource_group_cpu_limit);
-	writeInt64(0, NULL, comp, "cpu.shares",
+	writeInt64(CGROUP_TOP_DIR, NULL, comp, "cpu.shares",
 			   1024LL * gp_resource_group_cpu_priority);
 }
 
@@ -797,7 +798,7 @@ ResGroupOps_SetCpuRateLimit(Oid group, int cpu_rate_limit)
 
 	/* SUB/shares := TOP/shares * cpu_rate_limit */
 
-	int64 shares = readInt64(0, NULL, comp, "cpu.shares");
+	int64 shares = readInt64(CGROUP_TOP_DIR, NULL, comp, "cpu.shares");
 	writeInt64(group, NULL, comp, "cpu.shares", shares * cpu_rate_limit / 100);
 }
 
