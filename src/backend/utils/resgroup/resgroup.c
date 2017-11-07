@@ -258,7 +258,6 @@ static void selfValidateResGroupInfo(void);
 static bool selfIsAssignedDroppedGroup(void);
 static bool selfIsAssignedValidGroup(void);
 static bool selfIsUnassigned(void);
-static void selfUnassignDroppedGroup(void);
 static bool selfHasGroup(void);
 static void selfSetGroup(ResGroupData *group);
 static void selfUnsetGroup(void);
@@ -895,32 +894,7 @@ ResGroupReserveMemory(int32 memoryChunks, int32 overuseChunks, bool *waiverUsed)
 	Assert(selfIsAssigned());
 	Assert(slotIsInUse(slot));
 
-	if (selfIsAssignedDroppedGroup())
-	{
-		/*
-		 * However it might already be dropped. For example QE will stay in
-		 * a resgroup even after a transaction, so if the resgroup is
-		 * concurrently dropped and there is a memory allocation we'll
-		 * reach here.
-		 *
-		 * We would unset the group and slot from self and turn off memory
-		 * limit check so we'll not reach here again and again.
-		 */
-
-		Oid		groupGroupId = group->groupId;
-		Oid		selfGroupId = self->groupId;
-
-		selfUnassignDroppedGroup();
-		self->doMemCheck = false;
-
-		LOG_RESGROUP_DEBUG(LOG, "resource group is concurrently dropped while "
-						   "reserving memory: dropped group=%d, my group=%d",
-						   groupGroupId, selfGroupId);
-
-		return true;
-	}
-
-	/* Otherwise we are in a valid resgroup, perform the memory limit check */
+	/* We are in a valid resgroup, perform the memory limit check */
 	Assert(selfIsAssignedValidGroup());
 	Assert(group->memUsage >= 0);
 	Assert(self->memUsage >= 0);
@@ -976,21 +950,6 @@ ResGroupReleaseMemory(int32 memoryChunks)
 
 	Assert(selfIsAssigned());
 	Assert(slotIsInUse(slot));
-
-	if (selfIsAssignedDroppedGroup())
-	{
-		Oid		groupGroupId = group->groupId;
-		Oid		selfGroupId = self->groupId;
-
-		selfUnassignDroppedGroup();
-		self->doMemCheck = false;
-
-		LOG_RESGROUP_DEBUG(LOG, "resource group is concurrently dropped while "
-						   "releasing memory: dropped group=%d, my group=%d",
-						   groupGroupId, selfGroupId);
-
-		return;
-	}
 
 	Assert(selfIsAssignedValidGroup());
 
@@ -2646,24 +2605,6 @@ selfIsUnassigned(void)
 	selfValidateResGroupInfo();
 
 	return self->groupId == InvalidOid;
-}
-
-/*
- * Unassign from an assigned but dropped resgroup.
- *
- * This is mostly equal to selfUnsetGroup() + selfUnsetSlot(),
- * however this function requires self must be assigned
- * to that dropped resgroup before unassign.
- */
-static void
-selfUnassignDroppedGroup(void)
-{
-	Assert(selfIsAssignedDroppedGroup());
-
-	selfUnsetSlot();
-	selfUnsetGroup();
-
-	Assert(selfIsUnassigned());
 }
 
 #ifdef USE_ASSERT_CHECKING
