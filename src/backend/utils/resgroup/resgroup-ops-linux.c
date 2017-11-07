@@ -68,7 +68,6 @@ static int getOvercommitRatio(void);
 static void detectCgroupMountPoint(void);
 
 static Oid currentGroupIdInCGroup = InvalidOid;
-static int cpucores = 0;
 static char cgdir[MAXPGPATH];
 
 /*
@@ -374,24 +373,23 @@ removeDir(Oid group, const char *comp, bool unassign)
 static int
 getCpuCores(void)
 {
-	if (cpucores == 0)
+	int cpucores = 0;
+
+	/*
+	 * cpuset ops requires _GNU_SOURCE to be defined,
+	 * and _GNU_SOURCE is forced on in src/template/linux,
+	 * so we assume these ops are always available on linux.
+	 */
+	cpu_set_t cpuset;
+	int i;
+
+	if (sched_getaffinity(0, sizeof(cpuset), &cpuset) < 0)
+		CGROUP_ERROR("can't get cpu cores: %s", strerror(errno));
+
+	for (i = 0; i < CPU_SETSIZE; i++)
 	{
-		/*
-		 * cpuset ops requires _GNU_SOURCE to be defined,
-		 * and _GNU_SOURCE is forced on in src/template/linux,
-		 * so we assume these ops are always available on linux.
-		 */
-		cpu_set_t cpuset;
-		int i;
-
-		if (sched_getaffinity(0, sizeof(cpuset), &cpuset) < 0)
-			CGROUP_ERROR("can't get cpu cores: %s", strerror(errno));
-
-		for (i = 0; i < CPU_SETSIZE; i++)
-		{
-			if (CPU_ISSET(i, &cpuset))
-				cpucores++;
-		}
+		if (CPU_ISSET(i, &cpuset))
+			cpucores++;
 	}
 
 	if (cpucores == 0)
