@@ -935,7 +935,7 @@ ResGroupReleaseMemory(int32 memoryChunks)
 	ResGroupSlotData	*slot = self->slot;
 	ResGroupData		*group = self->group;
 
-	if (!IsResGroupActivated())
+	if (!IsResGroupEnabled())
 		return;
 
 	Assert(memoryChunks >= 0);
