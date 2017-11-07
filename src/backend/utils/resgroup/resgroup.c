@@ -1076,7 +1076,6 @@ static void
 selfAttachToSlot(ResGroupData *group, ResGroupSlotData *slot)
 {
 	selfSetSlot(slot);
-	AssertImply(slot->nProcs == 0, slot->memUsage == 0);
 	groupIncMemUsage(group, slot, self->memUsage);
 	pg_atomic_add_fetch_u32((pg_atomic_uint32*) &slot->nProcs, 1);
 
@@ -1095,7 +1094,6 @@ selfDetachSlot(ResGroupData *group, ResGroupSlotData *slot)
 
 	groupDecMemUsage(group, slot, self->memUsage);
 	pg_atomic_sub_fetch_u32((pg_atomic_uint32*) &slot->nProcs, 1);
-	AssertImply(slot->nProcs == 0, slot->memUsage == 0);
 	selfUnsetSlot();
 }
 
