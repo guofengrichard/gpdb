@@ -1097,6 +1097,9 @@ selfAttachToSlot(ResGroupData *group, ResGroupSlotData *slot)
 	AssertImply(slot->nProcs == 0, slot->memUsage == 0);
 	groupIncMemUsage(group, slot, self->memUsage);
 	pg_atomic_add_fetch_u32((pg_atomic_uint32*) &slot->nProcs, 1);
+
+	/* Start memory limit checking */
+	self->doMemCheck = true;
 }
 
 /*
@@ -1105,6 +1108,9 @@ selfAttachToSlot(ResGroupData *group, ResGroupSlotData *slot)
 static void
 selfDetachSlot(ResGroupData *group, ResGroupSlotData *slot)
 {
+	/* Stop memory limit checking */
+	self->doMemCheck = false;
+
 	groupDecMemUsage(group, slot, self->memUsage);
 	pg_atomic_sub_fetch_u32((pg_atomic_uint32*) &slot->nProcs, 1);
 	AssertImply(slot->nProcs == 0, slot->memUsage == 0);
@@ -2069,9 +2075,6 @@ retry:
 		/* Init self */
 		self->caps = slot->caps;
 
-		/* Start memory limit checking */
-		self->doMemCheck = true;
-
 		/* Don't error out before this line in this function */
 		SIMPLE_FAULT_INJECTOR(ResGroupAssignedOnMaster);
 
@@ -2106,9 +2109,6 @@ UnassignResGroup(void)
 
 	Assert(selfIsAssignedValidGroup());
 	Assert(selfHasSlot());
-
-	/* Stop memory limit checking */
-	self->doMemCheck = false;
 
 	/* Cleanup self */
 	if (self->memUsage > 10)
@@ -2224,9 +2224,6 @@ SwitchResGroupOnSegment(const char *buf, int len)
 
 	/* finally we can say we are in a valid resgroup */
 	Assert(selfIsAssignedValidGroup());
-
-	/* Start memory limit checking */
-	self->doMemCheck = true;
 
 	/* Add into cgroup */
 	ResGroupOps_AssignGroup(self->groupId, MyProcPid);
