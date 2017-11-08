@@ -111,7 +111,6 @@ struct ResGroupProcData
 	ResGroupCaps	caps;
 
 	int32	memUsage;			/* memory usage of current proc */
-	bool	doMemCheck;			/* whether to do memory limit check */
 };
 
 /*
@@ -866,14 +865,9 @@ ResGroupReserveMemory(int32 memoryChunks, int32 overuseChunks, bool *waiverUsed)
 	 * when this proc is assigned to a valid resource group.
 	 */
 	self->memUsage += memoryChunks;
-	if (!self->doMemCheck)
-	{
-		Assert(selfIsUnassigned());
+	if (selfIsUnassigned())
 		return true;
-	}
 
-	/* When doMemCheck is on, self must has been assigned to a resgroup. */
-	Assert(selfIsAssigned());
 	Assert(slotIsInUse(slot));
 
 	/* We are in a valid resgroup, perform the memory limit check */
@@ -924,13 +918,9 @@ ResGroupReleaseMemory(int32 memoryChunks)
 	Assert(memoryChunks <= self->memUsage);
 
 	self->memUsage -= memoryChunks;
-	if (!self->doMemCheck)
-	{
-		Assert(selfIsUnassigned());
+	if (selfIsUnassigned())
 		return;
-	}
 
-	Assert(selfIsAssigned());
 	Assert(slotIsInUse(slot));
 
 	Assert(selfIsAssignedValidGroup());
@@ -1078,9 +1068,6 @@ selfAttachToSlot(ResGroupData *group, ResGroupSlotData *slot)
 	selfSetSlot(slot);
 	groupIncMemUsage(group, slot, self->memUsage);
 	pg_atomic_add_fetch_u32((pg_atomic_uint32*) &slot->nProcs, 1);
-
-	/* Start memory limit checking */
-	self->doMemCheck = true;
 }
 
 /*
@@ -1089,9 +1076,6 @@ selfAttachToSlot(ResGroupData *group, ResGroupSlotData *slot)
 static void
 selfDetachSlot(ResGroupData *group, ResGroupSlotData *slot)
 {
-	/* Stop memory limit checking */
-	self->doMemCheck = false;
-
 	groupDecMemUsage(group, slot, self->memUsage);
 	pg_atomic_sub_fetch_u32((pg_atomic_uint32*) &slot->nProcs, 1);
 	selfUnsetSlot();
@@ -2044,8 +2028,6 @@ retry:
 			goto retry;
 		}
 
-		Assert(!self->doMemCheck);
-
 		/* Set resource group slot for current session */
 		sessionSetSlot(slot);
 
@@ -2082,10 +2064,7 @@ UnassignResGroup(void)
 	ResGroupSlotData	*slot = self->slot;
 
 	if (selfIsUnassigned())
-	{
-		Assert(self->doMemCheck == false);
 		return;
-	}
 
 	Assert(selfIsAssignedValidGroup());
 	Assert(selfHasSlot());
@@ -2146,9 +2125,6 @@ SwitchResGroupOnSegment(const char *buf, int len)
 	ResGroupData		*group;
 	ResGroupSlotData	*slot;
 
-	/* Stop memory limit checking */
-	self->doMemCheck = false;
-
 	DeserializeResGroupInfo(&caps, &newGroupId, buf, len);
 
 	if (newGroupId == InvalidOid)
@@ -2163,7 +2139,6 @@ SwitchResGroupOnSegment(const char *buf, int len)
 		/* it's not the first dispatch in the same transaction */
 		Assert(self->groupId == newGroupId);
 		Assert(!memcmp((void*)&self->caps, (void*)&caps, sizeof(caps)));
-		self->doMemCheck = true;
 		return;
 	}
 
