@@ -829,15 +829,29 @@ ResGroupDumpMemoryInfo(void)
 		Assert(selfIsAssignedValidGroup());
 
 		write_log("Resource group memory information: "
-				  "group memory limit is %d MB, "
-				  "shared quota in current resource group is %d MB, "
-				  "memory usage in current resource group is %d MB, "
+				  "current group id is %u, "
+				  "memLimit cap is %d, "
+				  "memSharedQuota cap is %d, "
+				  "memSpillRatio cap is %d, "
+				  "group expected memory limit is %d MB, "
+				  "memory quota granted in currenct group is %d MB, "
+				  "shared quota granted in current group is %d MB, "
+				  "memory assigned to all running slots is %d MB, "
+				  "memory usage in current group is %d MB, "
+				  "memory shared usage in current group is %d MB, "
 				  "memory quota in current slot is %d MB, "
 				  "memory usage in current slot is %d MB, "
 				  "memory usage in current proc is %d MB",
+				  group->groupId,
+				  group->caps.memLimit,
+				  group->caps.memSharedQuota,
+				  group->caps.memSpillRatio,
 				  VmemTracker_ConvertVmemChunksToMB(group->memExpected),
+				  VmemTracker_ConvertVmemChunksToMB(group->memQuotaGranted),
 				  VmemTracker_ConvertVmemChunksToMB(group->memSharedGranted),
+				  VmemTracker_ConvertVmemChunksToMB(group->memQuotaUsed),
 				  VmemTracker_ConvertVmemChunksToMB(group->memUsage),
+				  VmemTracker_ConvertVmemChunksToMB(group->memSharedUsage),
 				  VmemTracker_ConvertVmemChunksToMB(slot->memQuota),
 				  VmemTracker_ConvertVmemChunksToMB(slot->memUsage),
 				  VmemTracker_ConvertVmemChunksToMB(self->memUsage));
