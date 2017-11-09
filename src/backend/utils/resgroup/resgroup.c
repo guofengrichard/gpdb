@@ -900,10 +900,7 @@ ResGroupReserveMemory(int32 memoryChunks, int32 overuseChunks, bool *waiverUsed)
 	 */
 	self->memUsage += memoryChunks;
 	if (!self->doMemCheck)
-	{
-		Assert(selfIsUnassigned());
 		return true;
-	}
 
 	/* When doMemCheck is on, self must has been assigned to a resgroup. */
 	Assert(selfIsAssigned());
