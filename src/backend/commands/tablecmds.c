@@ -6618,17 +6618,18 @@ ATExecAddColumn(AlteredTableInfo *tab, Relation rel,
 	}
 
 	/*
-	 * MPP-14367/MPP-19664 - Handling of default NULL for AO/CO tables.
+	 * Handling of default NULL for AO/CO tables.
+	 *
 	 * Currently memtuples cannot deal with the scenario where the number of
 	 * attributes in the tuple data don't match the attnum. We will generate an
 	 * explicit NULL default value and force a rewrite of the table below.
-	 * Note: This is inefficient and there is already another JIRA MPP-5419
-	 * open to track adding columns without default values to AO tables
-	 * efficiently.  When that JIRA is fixed, the following piece of code may
-	 * be removed
 	 *
-	 * GPDB_84_MERGE_FIXME according to Jira 5419 is resolved, can we remove
-	 * this code now?
+	 * At one point there were plans to restructure memtuples so that this
+	 * rewrite did not have to occur. An optimization was added to
+	 * column-oriented tables to avoid the rewrite, but it does not apply to
+	 * row-oriented tables. Eventually it would be nice to remove this
+	 * workaround; see GitHub issue
+	 *     https://github.com/greenplum-db/gpdb/issues/3756
 	 */
 	if (!defval && (RelationIsAoRows(rel) || RelationIsAoCols(rel)))
 		defval = (Expr *) makeNullConst(typeOid, -1);
@@ -15086,62 +15087,6 @@ split_rows(Relation intoa, Relation intob, Relation temprel)
 
 /* ALTER TABLE ... SPLIT PARTITION */
 
-/* 
-   atpxSplitDropRule: walk the partition rules, eliminating rules that
-   match parruleid and paroid.  If topRule is supplied, walk his
-   subtree as well (it may differ from pnode if the PgPartRule was
-   copied).
-*/
-static void
-atpxSplitDropRule(PartitionNode *pNode, PartitionRule *topRule,
-				  Oid parruleid, Oid paroid)
-{
-	ListCell *lc;
-	ListCell *lcprev = NULL, *lcdel = NULL;
-
-	if (!pNode)
-		return;
-
-	foreach(lc, pNode->rules)
-	{
-		PartitionRule *rule = lfirst(lc);
-
-		if (rule->children)
-			atpxSplitDropRule(rule->children, NULL, 
-							  parruleid, paroid);
-
-		if ((parruleid == rule->parruleid) &&
-			(paroid == rule->paroid))
-		{
-			lcdel = lc; /* should only be one match */
-			break;
-		}
-		lcprev = lc;
-	}
-	if (lcdel)
-		pNode->rules = list_delete_cell(pNode->rules, lcdel, lcprev);
-
-	/* and the default partition */
-	if (pNode->default_part)
-	{
-		PartitionRule *rule = pNode->default_part;
-
-		if (rule->children)
-				atpxSplitDropRule(rule->children, NULL,
-								  parruleid, paroid);
-
-		if ((parruleid == rule->parruleid) &&
-			(paroid == rule->paroid))
-			pNode->default_part = NULL;
-	}
-
-	/* check optional topRule */
-	if (topRule && topRule->children)
-		atpxSplitDropRule(topRule->children, NULL,
-						  parruleid, paroid);
-
-} /* end atpxSplitDropRule */
-
 /* Given a Relation, make a distributed by () clause for parser consumption. */
 List *
 make_dist_clause(Relation rel)
@@ -15623,58 +15568,66 @@ ATPExecPartSplit(Relation *rel,
 		*rel = heap_open(relid, AccessExclusiveLock);
 		CommandCounterIncrement();
 
-		/*
-		 * Now that we've dropped the partition, we need to handle updating
-		 * the PgPartRule pid for the case where it is a pid representing
-		 * ALTER PARTITION ... ALTER PARTITION ...
-		 *
-		 * For the normal case, we'll just run get_part_rule() again deeper
-		 * in the code.
-		 */
-		if (pid->idtype == AT_AP_IDRule)
-		{
-			AlterPartitionId *tmppid = copyObject(pid);
-
-			/* MPP-10223: pid contains a "stale" pNode with a
-			 * partition rule for the partition we just dropped.
-			 * Delve deep into pNode to eliminate the topRule.
-			 */
-			if (1)
-			{
-				AlterPartitionId		*newpid	 = tmppid;
-				PgPartRule				*tmprule = NULL;
-
-				while (tmppid->idtype == AT_AP_IDRule)
-				{
-					List *l = (List *)tmppid->partiddef;
-
-					/* wipe out the topRule because the partition was
-					 * dropped, or PartAdd will find it and complain!!
-					 * Note that because the pid was copied,
-					 * tmprule->topRule has a separate copy of the
-					 * prule subtree, so we need to fix this one, too.
-					 */
-					tmprule = (PgPartRule *)linitial(l);
-
-					atpxSplitDropRule(tmprule->pNode, 
-									  tmprule->topRule,
-									  prule->topRule->parruleid, 
-									  prule->topRule->paroid);
-					tmppid = lsecond(l);
-				}
-				
-				tmppid = newpid;
-			}
-
-			aapid = tmppid;
-		}
-
-		/* Add two new partitions */
 		elog(DEBUG5, "Split partition: adding two new partitions");
 
 		/* 4) add two new partitions, via a loop to reduce code duplication */
 		for (i = 1; i <= 2; i++)
 		{
+			/*
+			 * Now that we've dropped the partition, we need to handle updating
+			 * the PgPartRule pid for the case where it is a pid representing
+			 * ALTER PARTITION ... ALTER PARTITION ...
+			 *
+			 * For the normal case, we'll just run get_part_rule() again deeper
+			 * in the code.
+			 */
+			if (pid->idtype == AT_AP_IDRule)
+			{
+				/*
+				 * MPP-10223: pid contains a "stale" pgPartRule with a
+				 * partition rule for the partition we just dropped.
+				 * Refresh partition rule from the catalog.
+				 */
+				AlterPartitionId *tmppid = copyObject(pid);
+
+				/*
+				 * Save the pointer value before we modify the partition rule
+				 * tree.
+				 */
+				aapid = tmppid;
+
+
+				while (tmppid->idtype == AT_AP_IDRule)
+				{
+					PgPartRule	*tmprule = NULL;
+					PgPartRule	*newRule = NULL;
+
+					List *l = (List *) tmppid->partiddef;
+
+					/*
+					 * We need to update the PgPartNode under
+					 * our AlterPartitionId because it still
+					 * contains the partition that we just
+					 * dropped. If we do not remove it here
+					 * PartAdd will find it and refuse to
+					 * add the new partition.
+					 */
+					tmprule = (PgPartRule *) linitial(l);
+					Assert(nodeTag(tmprule) == T_PgPartRule);
+
+					AlterPartitionId *apidByName = makeNode(AlterPartitionId);
+
+					apidByName->partiddef = (Node *)makeString(tmprule->topRule->parname);
+					apidByName->idtype = AT_AP_IDName;
+
+					newRule = get_part_rule(*rel, apidByName, true, true, NULL, false);
+					list_nth_replace(l, 0, newRule);
+					pfree(tmprule);
+
+					tmppid = lsecond(l);
+				}
+			}
+
 			/* build up commands for adding two. */
 			AlterPartitionId *mypid = makeNode(AlterPartitionId);
 			char *parname = NULL;
