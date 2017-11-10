@@ -201,7 +201,8 @@ static ResGroupProcData __self =
 };
 static ResGroupProcData *self = &__self;
 
-static bool localResWaiting = false;
+/* If we are waiting on a group, this points to the associated group */
+static ResGroupData* groupAwaited = NULL;
 
 /* static functions */
 
@@ -248,8 +249,8 @@ static void slotpoolFreeSlot(ResGroupSlotData *slot);
 static ResGroupSlotData *groupGetSlot(ResGroupData *group);
 static void groupPutSlot(ResGroupData *group, ResGroupSlotData *slot);
 static Oid decideResGroupId(void);
-static ResGroupData *decideResGroup(void);
-static ResGroupSlotData *groupAcquireSlot(ResGroupData *group);
+static void decideResGroup(ResGroupData **ppGroup, Oid *pGroupId);
+static ResGroupSlotData *groupAcquireSlot(ResGroupData *group, Oid groupId);
 static void groupReleaseSlot(ResGroupData *group, ResGroupSlotData *slot);
 static void addTotalQueueDuration(ResGroupData *group);
 static void groupSetMemorySpillRatio(const ResGroupCaps *caps);
@@ -1381,8 +1382,8 @@ decideResGroupId(void)
  *
  * An exception is thrown if current role is invalid.
  */
-static ResGroupData *
-decideResGroup(void)
+static void
+decideResGroup(ResGroupData **ppGroup, Oid *pGroupId)
 {
 	ResGroupData	*group;
 	Oid				 groupId;
@@ -1406,9 +1407,10 @@ decideResGroup(void)
 
 	Assert(group != NULL);
 
-	selfSetGroup(group);
 	LWLockRelease(ResGroupLock);
-	return group;
+
+	*ppGroup = group;
+	*pGroupId = groupId;
 }
 
 /*
@@ -1419,17 +1421,18 @@ decideResGroup(void)
  * and current slot in MyProc->resSlot.
  */
 static ResGroupSlotData *
-groupAcquireSlot(ResGroupData *group)
+groupAcquireSlot(ResGroupData *group, Oid groupId)
 {
 	ResGroupSlotData *slot;
 
 	/* should not been granted a slot yet */
-	Assert(selfIsAssigned());
+	Assert(!selfHasGroup());
 	Assert(!selfHasSlot());
 
 	LWLockAcquire(ResGroupLock, LW_EXCLUSIVE);
 
-	if (selfIsAssignedDroppedGroup())
+	/* Has the group been dropped? */
+	if (group->groupId != groupId)
 	{
 		LWLockRelease(ResGroupLock);
 		return NULL;
@@ -2049,6 +2052,7 @@ AssignResGroupOnMaster(void)
 {
 	ResGroupData		*group;
 	ResGroupSlotData	*slot;
+	Oid					groupId;
 
 	Assert(Gp_role == GP_ROLE_DISPATCH);
 
@@ -2062,21 +2066,20 @@ AssignResGroupOnMaster(void)
 	PG_TRY();
 	{
 retry:
-		group = decideResGroup();
+		decideResGroup(&group, &groupId);
 
 		/* Acquire slot */
-		slot = groupAcquireSlot(group);
+		slot = groupAcquireSlot(group, groupId);
 		if (slot == NULL)
-		{
-			selfUnsetGroup();
 			goto retry;
-		}
 
 		Assert(!self->doMemCheck);
 
 		/* Set resource group slot for current session */
 		sessionSetSlot(slot);
 
+		/* Set self->group */
+		selfSetGroup(group);
 		/* Add proc memory accounting info into group and slot */
 		selfAttachToSlot(group, slot);
 
@@ -2126,6 +2129,8 @@ UnassignResGroup(void)
 
 	/* Sub proc memory accounting info from group and slot */
 	selfDetachSlot(group, slot);
+	/* Cleanup group */
+	selfUnsetGroup();
 
 	if (Gp_role == GP_ROLE_DISPATCH)
 	{
@@ -2154,8 +2159,6 @@ UnassignResGroup(void)
 		mempoolAutoRelease(group);
 	}
 
-	/* Cleanup group */
-	selfUnsetGroup();
 	LWLockRelease(ResGroupLock);
 
 	pgstat_report_resgroup(0, InvalidOid);
@@ -2204,7 +2207,6 @@ SwitchResGroupOnSegment(const char *buf, int len)
 	/* Init self */
 	Assert(host_segments > 0);
 	Assert(caps.concurrency > 0);
-	selfSetGroup(group);
 	self->caps = caps;
 
 	/* Init slot */
@@ -2228,6 +2230,7 @@ SwitchResGroupOnSegment(const char *buf, int len)
 		group->nRunning++;
 	}
 
+	selfSetGroup(group);
 	selfAttachToSlot(group, slot);
 	Assert(selfHasSlot());
 
@@ -2249,7 +2252,7 @@ waitOnGroup(ResGroupData *group)
 	PGPROC *proc = MyProc;
 
 	Assert(!LWLockHeldExclusiveByMe(ResGroupLock));
-	Assert(selfHasGroup());
+	Assert(!selfHasGroup());
 	Assert(!selfHasSlot());
 
 	pgstat_report_resgroup(GetCurrentTimestamp(), group->groupId);
@@ -2259,7 +2262,7 @@ waitOnGroup(ResGroupData *group)
 	 *
 	 * This is used for interrupt cleanup, similar to lockAwaited in ProcSleep
 	 */
-	localResWaiting = true;
+	groupAwaited = group;
 
 	/*
 	 * Make sure we have released all locks before going to sleep, to eliminate
@@ -2285,7 +2288,7 @@ waitOnGroup(ResGroupData *group)
 	}
 	PG_END_TRY();
 
-	localResWaiting = false;
+	groupAwaited = NULL;
 
 	pgstat_report_waiting(PGBE_WAITING_NONE);
 }
@@ -2420,18 +2423,20 @@ groupWaitCancel(void)
 	ResGroupData		*group;
 	ResGroupSlotData	*slot;
 
-	/* Process exit without waiting for slot */
-	if (!selfHasGroup() || !localResWaiting)
+	/* Nothing to do if we weren't waiting on a group */
+	if (groupAwaited == NULL)
 		return;
+
+	Assert(!selfHasGroup());
+	Assert(!selfHasSlot());
+
+	group = groupAwaited;
 
 	/* We are sure to be interrupted in the for loop of waitOnGroup now */
 	LWLockAcquire(ResGroupLock, LW_EXCLUSIVE);
 
-	group = self->group;
-
 	AssertImply(procIsWaiting(MyProc),
 				groupWaitQueueFind(group, MyProc));
-	Assert(!selfHasSlot());
 
 	if (procIsWaiting(MyProc))
 	{
@@ -2441,16 +2446,16 @@ groupWaitCancel(void)
 		 */
 
 		Assert(!groupWaitQueueIsEmpty(group));
-		Assert(selfHasGroup());
 
 		groupWaitQueueErase(group, MyProc);
+
+		addTotalQueueDuration(group);
 	}
 	else if (MyProc->resSlot != NULL)
 	{
 		/* Woken up by a slot holder */
 
 		Assert(!procIsWaiting(MyProc));
-		Assert(selfIsAssignedValidGroup());
 
 		/* First complete the slot's transfer from MyProc to self */
 		slot = MyProc->resSlot;
@@ -2464,6 +2469,8 @@ groupWaitCancel(void)
 		Assert(sessionGetSlot() == NULL);
 
 		group->totalExecuted++;
+
+		addTotalQueueDuration(group);
 	}
 	else
 	{
@@ -2478,14 +2485,10 @@ groupWaitCancel(void)
 		Assert(!procIsWaiting(MyProc));
 	}
 
-	if (selfIsAssignedValidGroup())
-		addTotalQueueDuration(group);
-
 	LWLockRelease(ResGroupLock);
 
-	localResWaiting = false;
+	groupAwaited = NULL;
 	pgstat_report_waiting(PGBE_WAITING_NONE);
-	selfUnsetGroup();
 }
 
 static void
