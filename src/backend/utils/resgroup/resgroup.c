@@ -82,11 +82,25 @@ int							memory_spill_ratio=20;
  * Data structures
  */
 
+typedef struct ResGroupInfo				ResGroupInfo;
 typedef struct ResGroupHashEntry		ResGroupHashEntry;
 typedef struct ResGroupProcData			ResGroupProcData;
 typedef struct ResGroupSlotData			ResGroupSlotData;
 typedef struct ResGroupData				ResGroupData;
 typedef struct ResGroupControl			ResGroupControl;
+
+/*
+ * Resource group info.
+ *
+ * This records the group and groupId for a transaction.
+ * When group->groupId != groupId, it means the group
+ * has been dropped.
+ */
+struct ResGroupInfo
+{
+	ResGroupData	*group;
+	Oid				groupId;
+};
 
 struct ResGroupHashEntry
 {
@@ -238,16 +252,16 @@ static void groupDecMemUsage(ResGroupData *group,
 							 int32 chunks);
 static void initSlot(ResGroupSlotData *slot, ResGroupData *group,
 					 int32 slotMemQuota);
-static void selfAttachToSlot(ResGroupData *group, ResGroupSlotData *slot);
-static void selfDetachSlot(ResGroupData *group, ResGroupSlotData *slot);
+static void selfAttachResGroup(ResGroupData *group, ResGroupSlotData *slot);
+static void selfDetachResGroup(ResGroupData *group, ResGroupSlotData *slot);
 static bool slotpoolInit(void);
 static ResGroupSlotData *slotpoolAllocSlot(void);
 static void slotpoolFreeSlot(ResGroupSlotData *slot);
 static ResGroupSlotData *groupGetSlot(ResGroupData *group);
 static void groupPutSlot(ResGroupData *group, ResGroupSlotData *slot);
 static Oid decideResGroupId(void);
-static void decideResGroup(ResGroupData **ppGroup, Oid *pGroupId);
-static ResGroupSlotData *groupAcquireSlot(ResGroupData *group, Oid groupId);
+static void decideResGroup(ResGroupInfo *pGroupInfo);
+static ResGroupSlotData *groupAcquireSlot(ResGroupInfo *pGroupInfo);
 static void groupReleaseSlot(ResGroupData *group, ResGroupSlotData *slot);
 static void addTotalQueueDuration(ResGroupData *group);
 static void groupSetMemorySpillRatio(const ResGroupCaps *caps);
@@ -269,6 +283,7 @@ static bool groupWaitQueueIsEmpty(const ResGroupData *group);
 static bool shouldBypassQuery(const char *query_string);
 static void lockResGroupForDrop(ResGroupData *group);
 static void unlockResGroupForDrop(ResGroupData *group);
+static bool groupIsDropped(ResGroupInfo *pGroupInfo);
 
 static void resgroupDumpGroup(StringInfo str, ResGroupData *group);
 static void resgroupDumpWaitQueue(StringInfo str, PROC_QUEUE *queue);
@@ -1061,8 +1076,9 @@ groupDecMemUsage(ResGroupData *group, ResGroupSlotData *slot, int32 chunks)
  * Attach a process (QD or QE) to a slot.
  */
 static void
-selfAttachToSlot(ResGroupData *group, ResGroupSlotData *slot)
+selfAttachResGroup(ResGroupData *group, ResGroupSlotData *slot)
 {
+	selfSetGroup(group);
 	selfSetSlot(slot);
 	groupIncMemUsage(group, slot, self->memUsage);
 	pg_atomic_add_fetch_u32((pg_atomic_uint32*) &slot->nProcs, 1);
@@ -1072,11 +1088,12 @@ selfAttachToSlot(ResGroupData *group, ResGroupSlotData *slot)
  * Detach a process (QD or QE) from a slot.
  */
 static void
-selfDetachSlot(ResGroupData *group, ResGroupSlotData *slot)
+selfDetachResGroup(ResGroupData *group, ResGroupSlotData *slot)
 {
 	groupDecMemUsage(group, slot, self->memUsage);
 	pg_atomic_sub_fetch_u32((pg_atomic_uint32*) &slot->nProcs, 1);
 	selfUnsetSlot();
+	selfUnsetGroup();
 }
 
 /*
@@ -1319,7 +1336,7 @@ decideResGroupId(void)
  * An exception is thrown if current role is invalid.
  */
 static void
-decideResGroup(ResGroupData **ppGroup, Oid *pGroupId)
+decideResGroup(ResGroupInfo *pGroupInfo)
 {
 	ResGroupData	*group;
 	Oid				 groupId;
@@ -1345,8 +1362,8 @@ decideResGroup(ResGroupData **ppGroup, Oid *pGroupId)
 
 	LWLockRelease(ResGroupLock);
 
-	*ppGroup = group;
-	*pGroupId = groupId;
+	pGroupInfo->group = group;
+	pGroupInfo->groupId = groupId;
 }
 
 /*
@@ -1357,16 +1374,18 @@ decideResGroup(ResGroupData **ppGroup, Oid *pGroupId)
  * and current slot in MyProc->resSlot.
  */
 static ResGroupSlotData *
-groupAcquireSlot(ResGroupData *group, Oid groupId)
+groupAcquireSlot(ResGroupInfo *pGroupInfo)
 {
 	ResGroupSlotData *slot;
+	ResGroupData	 *group;
 
 	Assert(!selfIsAssigned());
+	group = pGroupInfo->group;
 
 	LWLockAcquire(ResGroupLock, LW_EXCLUSIVE);
 
 	/* Has the group been dropped? */
-	if (group->groupId != groupId)
+	if (groupIsDropped(pGroupInfo))
 	{
 		LWLockRelease(ResGroupLock);
 		return NULL;
@@ -1983,9 +2002,8 @@ ShouldUnassignResGroup(void)
 void
 AssignResGroupOnMaster(void)
 {
-	ResGroupData		*group;
 	ResGroupSlotData	*slot;
-	Oid					groupId;
+	ResGroupInfo		groupInfo;
 
 	Assert(Gp_role == GP_ROLE_DISPATCH);
 
@@ -1998,21 +2016,18 @@ AssignResGroupOnMaster(void)
 
 	PG_TRY();
 	{
-retry:
-		decideResGroup(&group, &groupId);
+		do {
+			decideResGroup(&groupInfo);
 
-		/* Acquire slot */
-		slot = groupAcquireSlot(group, groupId);
-		if (slot == NULL)
-			goto retry;
+			/* Acquire slot */
+			slot = groupAcquireSlot(&groupInfo);
+		} while (slot == NULL);
 
 		/* Set resource group slot for current session */
 		sessionSetSlot(slot);
 
-		/* Set self->group */
-		selfSetGroup(group);
 		/* Add proc memory accounting info into group and slot */
-		selfAttachToSlot(group, slot);
+		selfAttachResGroup(groupInfo.group, slot);
 
 		/* Init self */
 		self->caps = slot->caps;
@@ -2053,9 +2068,7 @@ UnassignResGroup(void)
 	LWLockAcquire(ResGroupLock, LW_EXCLUSIVE);
 
 	/* Sub proc memory accounting info from group and slot */
-	selfDetachSlot(group, slot);
-	/* Cleanup group */
-	selfUnsetGroup();
+	selfDetachResGroup(group, slot);
 
 	if (Gp_role == GP_ROLE_DISPATCH)
 	{
@@ -2147,8 +2160,7 @@ SwitchResGroupOnSegment(const char *buf, int len)
 		group->nRunning++;
 	}
 
-	selfSetGroup(group);
-	selfAttachToSlot(group, slot);
+	selfAttachResGroup(group, slot);
 
 	LWLockRelease(ResGroupLock);
 
@@ -2459,9 +2471,9 @@ static bool
 selfIsAssigned(void)
 {
 	selfValidateResGroupInfo();
-	AssertImply(self->groupId == InvalidOid,
+	AssertImply(self->group == NULL,
 			self->slot == NULL);
-	AssertImply(self->groupId != InvalidOid,
+	AssertImply(self->group != NULL,
 			self->slot != NULL);
 
 	return self->groupId != InvalidOid;
@@ -2707,7 +2719,6 @@ unlockResGroupForDrop(ResGroupData *group)
  * resgroup does is dropped.
  *
  * So this function is not always reliable, use with caution.
- *
  */
 static bool
 groupIsNotDropped(const ResGroupData *group)
@@ -2904,6 +2915,18 @@ shouldBypassQuery(const char *query_string)
 	}
 
 	return true;
+}
+
+/*
+ * Check whether the resource group has been dropped.
+ */
+static bool
+groupIsDropped(ResGroupInfo *pGroupInfo)
+{
+	Assert(pGroupInfo != NULL);
+	Assert(pGroupInfo->group != NULL);
+
+	return pGroupInfo->group->groupId != pGroupInfo->groupId;
 }
 
 /*
