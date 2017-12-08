@@ -9806,17 +9806,17 @@ CreateCheckPoint(int flags)
 
 	START_CRIT_SECTION();
 
+	getDtxCheckPointInfo(&dtxCheckPointInfo, &dtxCheckPointInfoSize);
+
 	/*
 	 * Now insert the checkpoint record into XLOG.
 	 *
 	 * Here is the locking order and scope:
 	 *
-	 * getDtxCheckPointInfoAndLock (i.e. shmControlLock)
 	 * 	READ_PERSISTENT_STATE_ORDERED_LOCK (i.e. PersistentObjLock)
 	 * 		mmxlog_append_checkpoint_data
 	 * 		XLogInsert
 	 * 	READ_PERSISTENT_STATE_ORDERED_UNLOCK
-	 * freeDtxCheckPointInfoAndUnlock
 	 * XLogFlush
 	 *
 	 * We get the PersistentObjLock to prevent Persistent Object writers as
@@ -9835,8 +9835,6 @@ CreateCheckPoint(int flags)
 	 * then recreated based on the checkpoint record. That will ends-up left behind the directories already
 	 * dropped on the master, break the consistency between the master and the standby.
 	 */
-
-	getDtxCheckPointInfoAndLock(&dtxCheckPointInfo, &dtxCheckPointInfoSize);
 
 	rdata[0].data = (char *) (&checkPoint);
 	rdata[0].len = sizeof(checkPoint);
@@ -9923,8 +9921,6 @@ CreateCheckPoint(int flags)
 			 XLogLastInsertTotalLen(),
 			 XLogLastInsertDataLen());
 	}
-
-	freeDtxCheckPointInfoAndUnlock(dtxCheckPointInfo, dtxCheckPointInfoSize, &recptr);
 
 	XLogFlush(recptr);
 

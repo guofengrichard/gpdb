@@ -228,6 +228,7 @@ typedef struct TMGXACT
 
 	bool						directTransaction;
 	uint16						directTransactionContentId;
+	bool						isInDoubt;
 }	TMGXACT;
 
 typedef struct TMGXACTSTATUS
@@ -315,13 +316,9 @@ extern void tmShmemInit(void);
 extern int	tmShmemSize(void);
 extern void initTM(void);
 
-extern void getDtxCheckPointInfoAndLock(char **result, int *result_size);
-extern void freeDtxCheckPointInfoAndUnlock(char *info, int info_size, XLogRecPtr *recptr);
+extern void getDtxCheckPointInfo(char **result, int *result_size);
 
 extern void verify_shared_snapshot_ready(void);
-
-void		getTmLock(void);
-void		releaseTmLock(void);
 
 int			mppTxnOptions(bool needTwoPhase);
 int			mppTxOptions_IsoLevel(int txnOptions);

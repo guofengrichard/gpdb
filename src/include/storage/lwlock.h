@@ -100,6 +100,7 @@ typedef enum LWLockId
 	RelfilenodeGenLock,
 	FilespaceHashLock,
 	TablespaceHashLock,
+	CheckpointTMLock,
 #ifdef USE_SEGWALREP
 	GpReplicationConfigFileLock,
 #endif
