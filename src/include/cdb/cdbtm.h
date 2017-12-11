@@ -228,6 +228,11 @@ typedef struct TMGXACT
 
 	bool						directTransaction;
 	uint16						directTransactionContentId;
+
+	/*
+	 * True means the transaction has inserted distributed commit record and
+	 * hasn't inserted distributed forget record.
+	 */
 	bool						isInDoubt;
 }	TMGXACT;
 

@@ -1967,6 +1967,7 @@ redoDistributedCommitRecord(TMGXACT_LOG *gxact_log)
 
 	Assert(LWLockHeldExclusiveByMe(shmControlLock));
 	restoreGxact(gxact_log, DTX_STATE_CRASH_COMMITTED);
+	currentGxact->isInDoubt = true;
 
 	elog((Debug_print_full_dtm ? LOG : DEBUG5),
 		 "Crash recovery redo added committed distributed transaction gid = %s", currentGxact->gid);
