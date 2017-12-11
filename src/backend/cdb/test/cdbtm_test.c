@@ -50,7 +50,7 @@ test__CreateDistributedSnapshot(void **state)
 	setup(&controlBlock, &gxact_array);
 
 	expect_value_count(LWLockAcquire, lockid, shmControlLock, -1);
-	expect_value_count(LWLockAcquire, mode, LW_EXCLUSIVE, -1);
+	expect_value_count(LWLockAcquire, mode, LW_SHARED, -1);
 	will_be_called_count(LWLockAcquire, -1);
 	expect_value_count(LWLockRelease, lockid, shmControlLock, -1);
 	will_be_called_count(LWLockRelease, -1);
