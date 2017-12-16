@@ -720,6 +720,11 @@ doInsertForgetCommitted(void)
 	RecordDistributedForgetCommitted(&gxact_log);
 
 	setCurrentGxactState(DTX_STATE_INSERTED_FORGET_COMMITTED);
+
+	/*
+	 * We don't acquire CheckPointTMLock here, there's no harm to include some
+	 * already 'forget' transactions in the checkpoint record.
+	 */
 	currentGxact->isInDoubt = false;
 }
 
@@ -1892,7 +1897,7 @@ ReplayRedoFromUtilityMode(void)
 		}
 		else
 		{
-			redoDistributedForgetCommitRecord(&utilityModeRedo.gxact_log);
+			redoDistributedForgetCommitRecord(&utilityModeRedo.gxact_log, true);
 		}
 
 		entries++;
@@ -1965,7 +1970,10 @@ redoDistributedCommitRecord(TMGXACT_LOG *gxact_log)
 		currentGxact = shmGxactArray[(*shmNumGxacts)++];
 	}
 
-	Assert(LWLockHeldExclusiveByMe(shmControlLock));
+	/*
+	 * There's no concurrent access to 'TMGXACT->state' and 'TMGXACT->isInDoubt',
+	 * so don't acquire lock.
+	 */
 	restoreGxact(gxact_log, DTX_STATE_CRASH_COMMITTED);
 	currentGxact->isInDoubt = true;
 
@@ -1985,7 +1993,7 @@ redoDistributedCommitRecord(TMGXACT_LOG *gxact_log)
  * Redo transaction forget commit log record.
  */
 void
-redoDistributedForgetCommitRecord(TMGXACT_LOG *gxact_log)
+redoDistributedForgetCommitRecord(TMGXACT_LOG *gxact_log, bool underLock)
 {
 	int			i;
 
@@ -2005,7 +2013,11 @@ redoDistributedForgetCommitRecord(TMGXACT_LOG *gxact_log)
 			elog((Debug_print_full_dtm ? INFO : DEBUG5),
 				 "Crash recovery redo removed committed distributed transaction gid = %s for forget",
 				 currentGxact->gid);
-			releaseGxact();
+
+			if (underLock)
+				releaseGxact_UnderLocks();
+			else
+				releaseGxact();
 			return;
 		}
 	}
@@ -2312,7 +2324,6 @@ CreateDistributedSnapshot(DistributedSnapshotWithLocalMapping *distribSnapshotWi
 	int			globalCount;
 	int			i;
 	TMGXACT    *gxact_candidate;
-	DtxState	state;
 	int			count;
 	DistributedTransactionId xmin;
 	DistributedTransactionId xmax;
@@ -2357,45 +2368,6 @@ CreateDistributedSnapshot(DistributedSnapshotWithLocalMapping *distribSnapshotWi
 		DistributedTransactionId dxid;
 
 		gxact_candidate = shmGxactArray[i];
-
-		state = gxact_candidate->state;
-		switch (state)
-		{
-			case DTX_STATE_ACTIVE_NOT_DISTRIBUTED:
-			case DTX_STATE_ACTIVE_DISTRIBUTED:
-			case DTX_STATE_PREPARING:
-			case DTX_STATE_PREPARED:
-			case DTX_STATE_INSERTED_COMMITTED:
-			case DTX_STATE_FORCED_COMMITTED:
-			case DTX_STATE_NOTIFYING_COMMIT_PREPARED:
-			case DTX_STATE_NOTIFYING_ABORT_NO_PREPARED:
-			case DTX_STATE_NOTIFYING_ABORT_SOME_PREPARED:
-			case DTX_STATE_NOTIFYING_ABORT_PREPARED:
-			case DTX_STATE_RETRY_COMMIT_PREPARED:
-			case DTX_STATE_RETRY_ABORT_PREPARED:
-			case DTX_STATE_INSERTING_FORGET_COMMITTED:
-			case DTX_STATE_INSERTED_FORGET_COMMITTED:
-			case DTX_STATE_INSERTING_COMMITTED:
-
-				/*
-				 * Active or commit/abort not complete.  Keep this transaction
-				 * considered for distributed snapshots.
-				 */
-				break;
-
-
-			case DTX_STATE_CRASH_COMMITTED:
-
-				/*
-				 * From a previous system incarnation.
-				 */
-				continue;
-
-			default:
-				elog(PANIC, "Unexpected dtm state: %d",
-					 (int) state);
-				break;
-		}
 
 		/* Update globalXminDistributedSnapshots to be the smallest valid dxid */
 		dxid = gxact_candidate->xminDistributedSnapshot;
@@ -2594,15 +2566,11 @@ releaseGxact_UnderLocks(void)
 static void
 releaseGxact(void)
 {
-	bool held = LWLockHeldByMe(shmControlLock);
-
-	if (!held)
-		LWLockAcquire(shmControlLock, LW_EXCLUSIVE);
+	LWLockAcquire(shmControlLock, LW_EXCLUSIVE);
 
 	releaseGxact_UnderLocks();
 
-	if (!held)
-		LWLockRelease(shmControlLock);
+	LWLockRelease(shmControlLock);
 }
 
 /*
@@ -2616,6 +2584,12 @@ insertingDistributedCommitted(void)
 		 "insertingDistributedCommitted entering in state = %s",
 		 DtxStateToString(currentGxact->state));
 
+	/*
+	 * Hold CheckpointTMLock during insertting 'commit' record and setting
+	 * 'TMGXACT->isInDoubt'.
+	 * Transactions insert 'commit' record shouldn't block each other, but they
+	 * should be serialized with getDtxCheckPointInfo().
+	 */
 	LWLockAcquire(CheckpointTMLock, LW_SHARED);
 	Assert(currentGxact->state == DTX_STATE_PREPARED);
 	setCurrentGxactState(DTX_STATE_INSERTING_COMMITTED);
@@ -2683,13 +2657,21 @@ getDtxCheckPointInfo(char **result, int *result_size)
 	gxact_checkpoint = palloc(TMGXACT_CHECKPOINT_BYTES(n));
 	gxact_log_array = &gxact_checkpoint->committedGxactArray[0];
 
-	LWLockAcquire(shmControlLock, LW_SHARED);				/* We will return with lock held below. */
+	LWLockAcquire(shmControlLock, LW_SHARED);
+
+	/*
+	 * If a transaction inserts 'commit' record logically before the checkpoint
+	 * REDO pointer, we will wait it release CheckpointTMLock, and we will see
+	 * its 'TMGXACT->isInDoubt' setted if its 'forget' record is not logically
+	 * before checkpoint REDO pointer.
+	 */
 	LWLockAcquire(CheckpointTMLock, LW_EXCLUSIVE);
 
 	actual = 0;
 	for (i = 0; i < n; i++)
 	{
 		gxact = shmGxactArray[i];
+
 		if (!gxact->isInDoubt)
 			continue;
 

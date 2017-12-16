@@ -230,8 +230,12 @@ typedef struct TMGXACT
 	uint16						directTransactionContentId;
 
 	/*
-	 * True means the transaction has inserted distributed commit record and
-	 * hasn't inserted distributed forget record.
+	 * True means:
+	 * 1. the transaction has inserted distributed commit record and hasn't
+	 * inserted distributed forget record.
+	 * or
+	 * 2. the transaction is loaded from checkpointer/xact redo log and mark as
+	 * 'crash committed' transaction.
 	 */
 	bool						isInDoubt;
 }	TMGXACT;
@@ -303,7 +307,7 @@ extern void forcedDistributedCommitted(XLogRecPtr *recptr);
 
 extern void redoDtxCheckPoint(TMGXACT_CHECKPOINT *gxact_checkpoint);
 extern void redoDistributedCommitRecord(TMGXACT_LOG *gxact_log);
-extern void redoDistributedForgetCommitRecord(TMGXACT_LOG *gxact_log);
+extern void redoDistributedForgetCommitRecord(TMGXACT_LOG *gxact_log, bool underLock);
 extern void descDistributedCommitRecord(StringInfo buf, TMGXACT_LOG *gxact_log);
 extern void descDistributedForgetCommitRecord(StringInfo buf, TMGXACT_LOG *gxact_log);
 
