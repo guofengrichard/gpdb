@@ -214,7 +214,7 @@ static TransactionStateData TopTransactionStateData = {
 static TransactionState CurrentTransactionState = &TopTransactionStateData;
 
 /* distributed transaction id of current transaction, if any. */
-static DistributedTransactionId currentDistribXid;
+DistributedTransactionId currentDistribXid;
 
 /*
  * The subtransaction ID and command ID assignment counters are global
@@ -2238,7 +2238,8 @@ StartTransaction(void)
 			 * distributed transaction to a local transaction id for the
 			 * master database.
 			 */
-			createDtx(&currentDistribXid);
+			//createDtx(&currentDistribXid);
+			setCurrentGxact();
 
 			if (SharedLocalSnapshotSlot != NULL)
 			{

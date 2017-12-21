@@ -15,6 +15,7 @@
 #include "cdb/cdbdtxcontextinfo.h"
 #include "cdb/cdbpublic.h"
 #include "nodes/plannodes.h"
+#include "storage/s_lock.h"
 
 /**
  * DTX states, used to track the state of the distributed transaction
@@ -238,6 +239,7 @@ typedef struct TMGXACT
 	 * 'crash committed' transaction.
 	 */
 	bool						isInDoubt;
+	int			pid;
 }	TMGXACT;
 
 typedef struct TMGXACTSTATUS
@@ -261,6 +263,7 @@ typedef struct TMGALLXACTSTATUS
 typedef struct TmControlBlock
 {
 	LWLockId					ControlLock;
+	slock_t 					ControlSeqnoLock;
 	bool						recoverred;
 	DistributedTransactionTimeStamp	distribTimeStamp;
 	DistributedTransactionId	seqno;
@@ -274,12 +277,14 @@ typedef struct TmControlBlock
 
 
 #define TMCONTROLBLOCK_BYTES(num_gxacts) \
-	(offsetof(TmControlBlock, gxact_array) + sizeof(TMGXACT) * (num_gxacts))
+	(offsetof(TmControlBlock, gxact_array) + sizeof(TMGXACT *) * (num_gxacts))
 
 extern DtxContext DistributedTransactionContext;
 
 /* state variables for how much of the log file has been flushed */
 extern volatile bool *shmDtmStarted;
+
+extern TMGXACT *MyGxact;
 
 extern char *DtxStateToString(DtxState state);
 extern char *DtxProtocolCommandToString(DtxProtocolCommand command);
@@ -291,7 +296,8 @@ extern void dtxCrackOpenGid(const char	*gid,
 extern DistributedTransactionId getDistributedTransactionId(void);
 extern bool getDistributedTransactionIdentifier(char *id);
 
-extern void createDtx(DistributedTransactionId	*distribXid);
+extern void setCurrentGxact(void);
+extern void createDtx(void);
 extern bool CreateDistributedSnapshot(DistributedSnapshotWithLocalMapping *distribSnapshotWithLocalMapping);
 extern void	prepareDtxTransaction(void);
 extern bool isPreparedDtxTransaction(void);
@@ -349,5 +355,6 @@ extern void UtilityModeFindOrCreateDtmRedoFile(void);
 extern void UtilityModeCloseDtmRedoFile(void);
 
 extern bool doDispatchSubtransactionInternalCmd(DtxProtocolCommand cmdType);
+extern void InitGxact(void);
 
 #endif   /* CDBTM_H */

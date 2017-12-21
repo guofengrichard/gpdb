@@ -66,6 +66,7 @@ extern struct Port *MyProcPort;
 #define UTILITYMODEDTMREDO_FILE "savedtmredo.file"
 
 static LWLockId shmControlLock;
+static slock_t *shmControlSeqnoLock;
 static volatile bool *shmTmRecoverred;
 static volatile DistributedTransactionTimeStamp *shmDistribTimeStamp;
 static volatile DistributedTransactionId *shmGIDSeq = NULL;
@@ -74,6 +75,8 @@ static volatile int *shmNumGxacts;
 uint32	   *shmNextSnapshotId;
 
 volatile bool *shmDtmStarted;
+
+TMGXACT *MyGxact = NULL;
 
 /* global transaction array */
 static TMGXACT **shmGxactArray;
@@ -123,6 +126,8 @@ typedef struct InDoubtDtx
 static void initGxact(TMGXACT *gxact);
 static void releaseGxact_UnderLocks(void);
 static void releaseGxact(void);
+static void removeGxact(void);
+static void removeGxact_UnderLocks(void);
 static void generateGID(char *gid, DistributedTransactionId *gxid);
 
 static void recoverTM(void);
@@ -155,6 +160,7 @@ static void ReplayRedoFromUtilityMode(void);
 static void RemoveRedoUtilityModeFile(void);
 static void performDtxProtocolCommitPrepared(const char *gid, bool raiseErrorIfNotFound);
 static void performDtxProtocolAbortPrepared(const char *gid, bool raiseErrorIfNotFound);
+static void RemoveGxactFromArray(int code, Datum arg);
 
 extern void resetSessionForPrimaryGangLoss(bool resetSession);
 extern void CheckForResetSession(void);
@@ -1577,6 +1583,7 @@ tmShmemInit(void)
 		elog(FATAL, "could not initialize transaction manager share memory");
 
 	shmControlLock = shared->ControlLock;
+	shmControlSeqnoLock = &shared->ControlSeqnoLock;
 	shmTmRecoverred = &shared->recoverred;
 	shmDistribTimeStamp = &shared->distribTimeStamp;
 	shmGIDSeq = &shared->seqno;
@@ -1608,6 +1615,8 @@ tmShmemInit(void)
 
 		shared->ControlLock = LWLockAssign();
 		shmControlLock = shared->ControlLock;
+
+		SpinLockInit(shmControlSeqnoLock);
 
 		/* initialize gxact array */
 		gxact = (TMGXACT *) (shmGxactArray + max_tm_gxacts);
@@ -1950,7 +1959,7 @@ redoDistributedCommitRecord(TMGXACT_LOG *gxact_log)
 		if (strcmp(gxact_log->gid, shmGxactArray[i]->gid) == 0)
 		{
 			/* found an active global transaction */
-			currentGxact = shmGxactArray[i];
+			MyGxact = currentGxact = shmGxactArray[i];
 			break;
 		}
 	}
@@ -1967,7 +1976,7 @@ redoDistributedCommitRecord(TMGXACT_LOG *gxact_log)
 					 errdetail("The global user configuration (GUC) server parameter max_prepared_transactions controls this limit.")));
 		}
 
-		currentGxact = shmGxactArray[(*shmNumGxacts)++];
+		MyGxact = currentGxact = shmGxactArray[(*shmNumGxacts)++];
 	}
 
 	/*
@@ -2009,7 +2018,7 @@ redoDistributedForgetCommitRecord(TMGXACT_LOG *gxact_log, bool underLock)
 		if (strcmp(gxact_log->gid, shmGxactArray[i]->gid) == 0)
 		{
 			/* found an active global transaction */
-			currentGxact = shmGxactArray[i];
+			MyGxact = currentGxact = shmGxactArray[i];
 			elog((Debug_print_full_dtm ? INFO : DEBUG5),
 				 "Crash recovery redo removed committed distributed transaction gid = %s for forget",
 				 currentGxact->gid);
@@ -2239,6 +2248,7 @@ initGxact(TMGXACT *gxact)
 	gxact->directTransaction = false;
 	gxact->directTransactionContentId = 0;
 	gxact->isInDoubt = false;
+	gxact->pid = MyProcPid;
 }
 
 void
@@ -2369,6 +2379,9 @@ CreateDistributedSnapshot(DistributedSnapshotWithLocalMapping *distribSnapshotWi
 
 		gxact_candidate = shmGxactArray[i];
 
+		if (gxact_candidate->state == DTX_STATE_CRASH_COMMITTED)
+			continue;
+
 		/* Update globalXminDistributedSnapshots to be the smallest valid dxid */
 		dxid = gxact_candidate->xminDistributedSnapshot;
 		if ((dxid != InvalidDistributedTransactionId) &&
@@ -2382,6 +2395,10 @@ CreateDistributedSnapshot(DistributedSnapshotWithLocalMapping *distribSnapshotWi
 		 * calculation.
 		 */
 		inProgressXid = gxact_candidate->gxid;
+
+		if (inProgressXid == InvalidDistributedTransactionId)
+			continue;
+
 		if (inProgressXid < xmin)
 		{
 			xmin = inProgressXid;
@@ -2469,11 +2486,33 @@ CreateDistributedSnapshot(DistributedSnapshotWithLocalMapping *distribSnapshotWi
 	return true;
 }
 
+void
+setCurrentGxact()
+{
+	TMGXACT    *gxact = MyGxact;
+
+	Assert(MyGxact != NULL);
+
+	generateGID(gxact->gid, &gxact->gxid);
+
+	/*
+	 * Until we get our first distributed snapshot, we use our distributed
+	 * transaction identifier for the minimum.
+	 */
+	gxact->xminDistributedSnapshot = gxact->gxid;
+
+	setGxactState(gxact, DTX_STATE_ACTIVE_NOT_DISTRIBUTED);
+	gxact->pid = MyProcPid;
+
+	currentGxact = gxact;
+	currentDistribXid = gxact->gxid;
+}
+
 /*
  * Create a global transaction context from share memory.
  */
 void
-createDtx(DistributedTransactionId *distribXid)
+createDtx()
 {
 	TMGXACT    *gxact;
 
@@ -2495,27 +2534,28 @@ createDtx(DistributedTransactionId *distribXid)
 
 	gxact = shmGxactArray[(*shmNumGxacts)++];
 	initGxact(gxact);
-	generateGID(gxact->gid, &gxact->gxid);
-
-	*distribXid = gxact->gxid;
-
-	/*
-	 * Until we get our first distributed snapshot, we use our distributed
-	 * transaction identifier for the minimum.
-	 */
-	gxact->xminDistributedSnapshot = gxact->gxid;
-
-	setGxactState(gxact, DTX_STATE_ACTIVE_NOT_DISTRIBUTED);
 
 	LWLockRelease(shmControlLock);
 
 	MIRRORED_UNLOCK;
 
-	currentGxact = gxact;
+	MyGxact = gxact;
+//	elog(DTM_DEBUG5,
+//		 "createDtx created new distributed transaction gid = %s, gxid = %u.",
+//		 currentGxact->gid, currentGxact->gxid);
+}
 
-	elog(DTM_DEBUG5,
-		 "createDtx created new distributed transaction gid = %s, gxid = %u.",
-		 currentGxact->gid, currentGxact->gxid);
+void
+InitGxact()
+{
+	createDtx();
+	on_shmem_exit(RemoveGxactFromArray, 0);
+}
+
+static void
+RemoveGxactFromArray(int code, Datum arg)
+{
+	removeGxact();
 }
 
 
@@ -2524,25 +2564,25 @@ createDtx(DistributedTransactionId *distribXid)
  * Must already hold the DTM lock.
  */
 static void
-releaseGxact_UnderLocks(void)
+removeGxact_UnderLocks(void)
 {
 	int			i;
 	int			curr;
 
-	if (currentGxact == NULL)
+	if (MyGxact == NULL)
 	{
-		elog(FATAL, "releaseGxact expected currentGxact to not be NULL");
+		elog(FATAL, "releaseGxact expected MyGxact to not be NULL");
 	}
 
 	elog(DTM_DEBUG5,
 		 "releaseGxact called for gid = %s (index = %d)",
-		 currentGxact->gid, currentGxact->debugIndex);
+		 MyGxact->gid, MyGxact->debugIndex);
 
 	/* find slot of current transaction */
 	curr = *shmNumGxacts;		/* A bad value we can safely test. */
 	for (i = 0; i < *shmNumGxacts; i++)
 	{
-		if (shmGxactArray[i] == currentGxact)
+		if (shmGxactArray[i] == MyGxact)
 		{
 			curr = i;
 			break;
@@ -2554,15 +2594,25 @@ releaseGxact_UnderLocks(void)
 	if (curr != *shmNumGxacts)
 	{
 		shmGxactArray[curr] = shmGxactArray[*shmNumGxacts];
-		shmGxactArray[*shmNumGxacts] = currentGxact;
+		shmGxactArray[*shmNumGxacts] = MyGxact;
 	}
 
-	currentGxact = NULL;
+	MyGxact = NULL;
 }
 
 /*
  * Release global transaction's shared memory.
  */
+static void
+removeGxact(void)
+{
+	LWLockAcquire(shmControlLock, LW_EXCLUSIVE);
+
+	removeGxact_UnderLocks();
+
+	LWLockRelease(shmControlLock);
+}
+
 static void
 releaseGxact(void)
 {
@@ -2571,6 +2621,19 @@ releaseGxact(void)
 	releaseGxact_UnderLocks();
 
 	LWLockRelease(shmControlLock);
+}
+
+static void
+releaseGxact_UnderLocks(void)
+{
+	if (MyGxact == NULL)
+		return;
+
+	Assert(currentGxact != NULL);
+	Assert(MyGxact == currentGxact);
+	initGxact(currentGxact);
+
+	currentGxact = NULL;
 }
 
 /*
@@ -2720,15 +2783,20 @@ getDtxCheckPointInfo(char **result, int *result_size)
 static void
 generateGID(char *gid, DistributedTransactionId *gxid)
 {
+	SpinLockAcquire(shmControlSeqnoLock);
+
 	/* tm lock acquired by caller */
 	if (*shmGIDSeq >= LastDistributedTransactionId)
 	{
+		SpinLockRelease(shmControlSeqnoLock);
 		ereport(FATAL,
 				(errmsg("reached limit of %u global transactions per start", LastDistributedTransactionId)));
 	}
-	Assert(*shmDistribTimeStamp != 0);
-
 	*gxid = ++(*shmGIDSeq);
+
+	SpinLockRelease(shmControlSeqnoLock);
+
+	Assert(*shmDistribTimeStamp != 0);
 	sprintf(gid, "%u-%.10u", *shmDistribTimeStamp, (*gxid));
 	if (strlen(gid) >= TMGIDSIZE)
 		elog(PANIC, "Distribute transaction identifier too long (%d)",
@@ -2834,6 +2902,7 @@ recoverInDoubtTransactions(void)
 	int			i;
 	HTAB	   *htab;
 	TMGXACT    *saved_currentGxact;
+	TMGXACT    *saved_MyGxact;
 
 	elog(DTM_DEBUG3, "recover in-doubt distributed transactions");
 
@@ -2850,10 +2919,23 @@ recoverInDoubtTransactions(void)
 	dumpAllDtx();
 
 	saved_currentGxact = currentGxact;
+	saved_MyGxact = MyGxact;
 
 	for (i = 0; i < *shmNumGxacts;)
 	{
 		TMGXACT    *gxact = shmGxactArray[i];
+
+		if (gxact->gxid == InvalidDistributedTransactionId)
+		{
+			i++;
+			continue;
+		}
+
+		if (saved_MyGxact != NULL && gxact == saved_MyGxact)
+		{
+			i++;
+			continue;
+		}
 
 		/*
 		 * MPP-4867: if we are running deferred, skip any transaction we're
@@ -2888,7 +2970,7 @@ recoverInDoubtTransactions(void)
 		 */
 		doNotifyCommittedInDoubt(gxact->gid);
 
-		currentGxact = gxact;
+		MyGxact = currentGxact = gxact;
 
 		/*
 		 * This routine would call releaseGxact_UnderLocks, which would
@@ -2903,6 +2985,8 @@ recoverInDoubtTransactions(void)
 	}
 
 	currentGxact = saved_currentGxact;
+	MyGxact = saved_MyGxact;
+
 	dumpAllDtx();
 
 	/*

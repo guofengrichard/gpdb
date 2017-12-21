@@ -49,6 +49,8 @@ extern bool XactSyncCommit;
 /* Kluge for 2PC support */
 extern bool MyXactAccessedTempRel;
 
+extern DistributedTransactionId currentDistribXid;
+
 /*
  *	start- and end-of-transaction callbacks for dynamically loaded modules
  */
