@@ -128,7 +128,7 @@ static void releaseGxact_UnderLocks(void);
 static void releaseGxact(void);
 static void removeGxact(void);
 static void removeGxact_UnderLocks(void);
-static void generateGID(char *gid, DistributedTransactionId *gxid);
+static DistributedTransactionId generateGID(void);
 
 static void recoverTM(void);
 static bool recoverInDoubtTransactions(void);
@@ -2333,7 +2333,6 @@ CreateDistributedSnapshot(DistributedSnapshotWithLocalMapping *distribSnapshotWi
 {
 	int			globalCount;
 	int			i;
-	TMGXACT    *gxact_candidate;
 	int			count;
 	DistributedTransactionId xmin;
 	DistributedTransactionId xmax;
@@ -2375,11 +2374,18 @@ CreateDistributedSnapshot(DistributedSnapshotWithLocalMapping *distribSnapshotWi
 
 	for (i = 0; i < globalCount; i++)
 	{
+		volatile  TMGXACT    *gxact_candidate;
 		DistributedTransactionId dxid;
 
 		gxact_candidate = shmGxactArray[i];
 
-		if (gxact_candidate->state == DTX_STATE_CRASH_COMMITTED)
+		/* just fetch once */
+		inProgressXid = gxact_candidate->gxid;
+
+		if (inProgressXid == InvalidDistributedTransactionId)
+			continue;
+
+		if (gxact_candidate->isInDoubt)
 			continue;
 
 		/* Update globalXminDistributedSnapshots to be the smallest valid dxid */
@@ -2394,11 +2400,6 @@ CreateDistributedSnapshot(DistributedSnapshotWithLocalMapping *distribSnapshotWi
 		 * Include the current distributed transaction in the min/max
 		 * calculation.
 		 */
-		inProgressXid = gxact_candidate->gxid;
-
-		if (inProgressXid == InvalidDistributedTransactionId)
-			continue;
-
 		if (inProgressXid < xmin)
 		{
 			xmin = inProgressXid;
@@ -2489,20 +2490,29 @@ CreateDistributedSnapshot(DistributedSnapshotWithLocalMapping *distribSnapshotWi
 void
 setCurrentGxact()
 {
-	TMGXACT    *gxact = MyGxact;
+	DistributedTransactionId	gxid;
+	TMGXACT						*gxact; 
 
+	gxact = MyGxact;
 	Assert(MyGxact != NULL);
 
-	generateGID(gxact->gid, &gxact->gxid);
+	gxid = generateGID();
+	Assert(gxid != InvalidDistributedTransactionId);
 
 	/*
 	 * Until we get our first distributed snapshot, we use our distributed
 	 * transaction identifier for the minimum.
 	 */
-	gxact->xminDistributedSnapshot = gxact->gxid;
+	gxact->xminDistributedSnapshot = gxid;
+
+	Assert(*shmDistribTimeStamp != 0);
+	sprintf(gxact->gid, "%u-%.10u", *shmDistribTimeStamp, gxid);
+	if (strlen(gxact->gid) >= TMGIDSIZE)
+		elog(PANIC, "Distribute transaction identifier too long (%d)",
+			 (int) strlen(gxact->gid));
 
 	setGxactState(gxact, DTX_STATE_ACTIVE_NOT_DISTRIBUTED);
-	gxact->pid = MyProcPid;
+	gxact->gxid = gxid;
 
 	currentGxact = gxact;
 	currentDistribXid = gxact->gxid;
@@ -2598,6 +2608,7 @@ removeGxact_UnderLocks(void)
 	}
 
 	MyGxact = NULL;
+	currentGxact = NULL;
 }
 
 /*
@@ -2780,9 +2791,11 @@ getDtxCheckPointInfo(char **result, int *result_size)
 }
 
 /* generate global transaction id */
-static void
-generateGID(char *gid, DistributedTransactionId *gxid)
+static DistributedTransactionId
+generateGID(void)
 {
+	DistributedTransactionId gxid;
+
 	SpinLockAcquire(shmControlSeqnoLock);
 
 	/* tm lock acquired by caller */
@@ -2792,17 +2805,11 @@ generateGID(char *gid, DistributedTransactionId *gxid)
 		ereport(FATAL,
 				(errmsg("reached limit of %u global transactions per start", LastDistributedTransactionId)));
 	}
-	*gxid = ++(*shmGIDSeq);
+	gxid = ++(*shmGIDSeq);
 
 	SpinLockRelease(shmControlSeqnoLock);
+	return gxid;
 
-	Assert(*shmDistribTimeStamp != 0);
-	sprintf(gid, "%u-%.10u", *shmDistribTimeStamp, (*gxid));
-	if (strlen(gid) >= TMGIDSIZE)
-		elog(PANIC, "Distribute transaction identifier too long (%d)",
-			 (int) strlen(gid));
-
-	Assert(*gxid != InvalidDistributedTransactionId);
 }
 
 /*
