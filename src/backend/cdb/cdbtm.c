@@ -1959,7 +1959,7 @@ redoDistributedCommitRecord(TMGXACT_LOG *gxact_log)
 		if (strcmp(gxact_log->gid, shmGxactArray[i]->gid) == 0)
 		{
 			/* found an active global transaction */
-			MyGxact = currentGxact = shmGxactArray[i];
+			currentGxact = shmGxactArray[i];
 			break;
 		}
 	}
@@ -1976,7 +1976,7 @@ redoDistributedCommitRecord(TMGXACT_LOG *gxact_log)
 					 errdetail("The global user configuration (GUC) server parameter max_prepared_transactions controls this limit.")));
 		}
 
-		MyGxact = currentGxact = shmGxactArray[(*shmNumGxacts)++];
+		currentGxact = shmGxactArray[(*shmNumGxacts)++];
 	}
 
 	/*
@@ -2637,9 +2637,7 @@ releaseGxact(void)
 static void
 releaseGxact_UnderLocks(void)
 {
-	if (MyGxact == NULL)
-		return;
-
+	Assert(MyGxact != NULL);
 	Assert(currentGxact != NULL);
 	Assert(MyGxact == currentGxact);
 	initGxact(currentGxact);

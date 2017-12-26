@@ -636,6 +636,9 @@ InitPostgres(const char *in_dbname, Oid dboid, const char *username,
 	 */
 	InitProcessPhase2();
 
+	InitGxact();
+
+
 	/* Initialize SessionState entry */
 	SessionState_Init();
 	/* Initialize memory protection */
@@ -1068,8 +1071,6 @@ InitPostgres(const char *in_dbname, Oid dboid, const char *username,
 			lookupSharedSnapshot("Reader qExec", "Writer qExec", gp_session_id);
 		}
 	}
-
-	InitGxact();
 
 	/* close the transaction we started above */
 	if (!bootstrap)
