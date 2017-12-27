@@ -2017,16 +2017,23 @@ redoDistributedForgetCommitRecord(TMGXACT_LOG *gxact_log, bool underLock)
 	{
 		if (strcmp(gxact_log->gid, shmGxactArray[i]->gid) == 0)
 		{
+			TMGXACT *saved_MyGxact = MyGxact;
+			TMGXACT *saved_currentGxact = currentGxact;
+
 			/* found an active global transaction */
-			MyGxact = currentGxact = shmGxactArray[i];
+			MyGxact =  shmGxactArray[i];
 			elog((Debug_print_full_dtm ? INFO : DEBUG5),
 				 "Crash recovery redo removed committed distributed transaction gid = %s for forget",
-				 currentGxact->gid);
+				 MyGxact->gid);
 
 			if (underLock)
-				releaseGxact_UnderLocks();
+				removeGxact_UnderLocks();
 			else
-				releaseGxact();
+				removeGxact();
+
+			MyGxact = saved_MyGxact;
+			currentGxact = saved_currentGxact;
+
 			return;
 		}
 	}
