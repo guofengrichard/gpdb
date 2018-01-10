@@ -216,6 +216,7 @@ typedef enum FaultInjectorIdentifier_e {
 	AfterOneSliceDispatched,
 
 	InterconnectStopAckIsLost,
+	InterconnectSetupPalloc,
 	QEGotSnapshotAndInterconnect,
 
 	FsyncCounter,

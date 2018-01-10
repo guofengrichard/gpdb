@@ -327,6 +327,8 @@ FaultInjectorIdentifierEnumToString[] = {
 		/* inject fault in cdbdisp_dispatchX*/
 	_("interconnect_stop_ack_is_lost"),
 		/* inject fault in interconnect to skip sending the stop ack */
+	_("interconnect_setup_palloc"),
+		/* inject fault in interconnect to make palloc0 fail in setup */
 	_("qe_got_snapshot_and_interconnect"),
 		/* inject fault after qe got snapshot and interconnect*/
 	_("fsync_counter"),
