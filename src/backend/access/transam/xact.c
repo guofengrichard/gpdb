@@ -2052,7 +2052,7 @@ StartTransaction(void)
 			 * master database.
 			 */
 			setCurrentGxact();
-			currentDistribXid = MyProc->gxact.gxid;
+			currentDistribXid = MyGxact->gxid;
 
 			if (SharedLocalSnapshotSlot != NULL)
 			{

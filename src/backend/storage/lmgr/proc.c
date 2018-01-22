@@ -76,6 +76,7 @@ bool		log_lock_waits = false;
 
 /* Pointer to this process's PGPROC struct, if any */
 PGPROC	   *MyProc = NULL;
+TMGXACT	   *MyGxact = NULL;
 
 /* Special for MPP reader gangs */
 PGPROC	   *lockHolderProcPtr = NULL;
@@ -90,7 +91,7 @@ PGPROC	   *lockHolderProcPtr = NULL;
 NON_EXEC_STATIC slock_t *ProcStructLock = NULL;
 
 /* Pointers to shared-memory structures */
-NON_EXEC_STATIC PROC_HDR *ProcGlobal = NULL;
+PROC_HDR *ProcGlobal = NULL;
 NON_EXEC_STATIC PGPROC *AuxiliaryProcs = NULL;
 
 /* If we are waiting for a lock, this points to the associated LOCALLOCK */
@@ -132,6 +133,10 @@ ProcGlobalShmemSize(void)
 	size = add_size(size, mul_size(NUM_AUXILIARY_PROCS, sizeof(PGPROC)));
 	/* MyProcs, including autovacuum */
 	size = add_size(size, mul_size(MaxBackends, sizeof(PGPROC)));
+	/* AuxiliaryProcs */
+	size = add_size(size, mul_size(NUM_AUXILIARY_PROCS, sizeof(TMGXACT)));
+	/* MyProcs, including autovacuum */
+	size = add_size(size, mul_size(MaxBackends, sizeof(TMGXACT)));
 	/* ProcStructLock */
 	size = add_size(size, sizeof(slock_t));
 
@@ -179,6 +184,7 @@ void
 InitProcGlobal(int mppLocalProcessCounter)
 {
 	PGPROC	   *procs;
+	TMGXACT	   *gxacts;
 	int			i;
 	bool		found;
 
@@ -217,13 +223,15 @@ InitProcGlobal(int mppLocalProcessCounter)
 	MemSet(procs, 0, MaxConnections * sizeof(PGPROC));
 	for (i = 0; i < MaxConnections; i++)
 	{
+		procs[i].pgprocno = i;
+
 		PGSemaphoreCreate(&(procs[i].sem));
 		InitSharedLatch(&(procs[i].procLatch));
 
 		procs[i].links.next = (SHM_QUEUE *) ProcGlobal->freeProcs;
 		ProcGlobal->freeProcs = &procs[i];
 	}
-	ProcGlobal->procs = procs;
+	ProcGlobal->allProcs = procs;
 	ProcGlobal->numFreeProcs = MaxConnections;
 
 	procs = (PGPROC *) ShmemAlloc((autovacuum_max_workers) * sizeof(PGPROC));
@@ -234,6 +242,8 @@ InitProcGlobal(int mppLocalProcessCounter)
 	MemSet(procs, 0, autovacuum_max_workers * sizeof(PGPROC));
 	for (i = 0; i < autovacuum_max_workers; i++)
 	{
+		procs[i].pgprocno = MaxConnections + i;
+
 		PGSemaphoreCreate(&(procs[i].sem));
 		InitSharedLatch(&(procs[i].procLatch));
 		procs[i].links.next = (SHM_QUEUE *) ProcGlobal->autovacFreeProcs;
@@ -243,6 +253,7 @@ InitProcGlobal(int mppLocalProcessCounter)
 	MemSet(AuxiliaryProcs, 0, NUM_AUXILIARY_PROCS * sizeof(PGPROC));
 	for (i = 0; i < NUM_AUXILIARY_PROCS; i++)
 	{
+		procs[i].pgprocno = MaxConnections + autovacuum_max_workers + i;
 		AuxiliaryProcs[i].pid = 0;		/* marks auxiliary proc as not in use */
 		PGSemaphoreCreate(&(AuxiliaryProcs[i].sem));
 		InitSharedLatch(&(AuxiliaryProcs[i].procLatch));
@@ -251,6 +262,14 @@ InitProcGlobal(int mppLocalProcessCounter)
 	/* Create ProcStructLock spinlock, too */
 	ProcStructLock = (slock_t *) ShmemAlloc(sizeof(slock_t));
 	SpinLockInit(ProcStructLock);
+
+	gxacts = (PGPROC *) ShmemAlloc((MaxConnections + autovacuum_max_workers + NUM_AUXILIARY_PROCS) * sizeof(TMGXACT));
+	if (!gxacts)
+		ereport(FATAL,
+				(errcode(ERRCODE_OUT_OF_MEMORY),
+				 errmsg("out of shared memory")));
+	MemSet(gxacts, 0, (MaxConnections + autovacuum_max_workers) * sizeof(TMGXACT));
+	ProcGlobal->allGxacts = gxacts;
 }
 
 /*
@@ -329,6 +348,7 @@ InitProcess(void)
 				(errcode(ERRCODE_TOO_MANY_CONNECTIONS),
 				 errmsg("sorry, too many clients already")));
 	}
+	MyGxact = &ProcGlobal->allGxacts[MyProc->pgprocno];
 
 	if (gp_debug_pgproc)
 	{
@@ -440,7 +460,7 @@ InitProcess(void)
 	MyProc->queryCommandId = -1;
 
 	/* Init gxact */
-	initGxact(&MyProc->gxact);
+	initGxact(MyGxact);
 
 	/*
 	 * Arrange to clean up at backend exit.
@@ -546,6 +566,7 @@ InitAuxiliaryProcess(void)
 	((volatile PGPROC *) auxproc)->pid = MyProcPid;
 
 	MyProc = auxproc;
+	MyGxact = &ProcGlobal->allGxacts[MyProc->pgprocno];
 	lockHolderProcPtr = auxproc;
 
 	SpinLockRelease(ProcStructLock);

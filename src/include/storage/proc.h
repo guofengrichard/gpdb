@@ -107,6 +107,7 @@ struct PGPROC
 	LocalDistribXactData localDistribXactData;
 
 	int			pid;			/* This backend's process id, or 0 */
+	int         pgprocno;
 	BackendId	backendId;		/* This backend's backend ID (if assigned) */
 	Oid			databaseId;		/* OID of database this backend is using */
 	Oid			roleId;			/* OID of role using this backend */
@@ -173,12 +174,12 @@ struct PGPROC
 	void		*resSlot;	/* the resource group slot granted.
    							 * NULL indicates the resource group is
 							 * locked for drop. */
-	TMGXACT		gxact;
 };
 
 /* NOTE: "typedef struct PGPROC PGPROC" appears in storage/lock.h. */
 
 extern PGDLLIMPORT PGPROC *MyProc;
+extern PGDLLIMPORT TMGXACT *MyGxact;
 
 /* Special for MPP reader gangs */
 extern PGDLLIMPORT PGPROC *lockHolderProcPtr;
@@ -190,7 +191,8 @@ extern PGDLLIMPORT PGPROC *lockHolderProcPtr;
 typedef struct PROC_HDR
 {
 	/* The PGPROC structures */
-	PGPROC *procs;
+	PGPROC	   *allProcs;
+	TMGXACT	   *allGxacts;
 	/* Head of list of free PGPROC structures */
 	PGPROC	   *freeProcs;
 	/* Head of list of autovacuum's free PGPROC structures */
@@ -206,6 +208,7 @@ typedef struct PROC_HDR
 
 } PROC_HDR;
 
+extern PROC_HDR *ProcGlobal;
 /*
  * We set aside some extra PGPROC structures for auxiliary processes,
  * ie things that aren't full-fledged backends but need shmem access.

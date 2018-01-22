@@ -147,6 +147,7 @@ void
 ProcArrayAdd(PGPROC *proc)
 {
 	ProcArrayStruct *arrayP = procArray;
+	int index;
 
 	LWLockAcquire(ProcArrayLock, LW_EXCLUSIVE);
 
@@ -164,8 +165,15 @@ ProcArrayAdd(PGPROC *proc)
 				(errcode(ERRCODE_TOO_MANY_CONNECTIONS),
 				 errmsg("sorry, too many clients already")));
 	}
+	for (index = 0; index < arrayP->numProcs; index++)
+	{
+		if (arrayP->procs[index]->pgprocno > proc->pgprocno)
+			break;
+	}
+	memmove(&arrayP->procs[index + 1], &arrayP->procs[index],
+			(arrayP->numProcs - index) * sizeof(PGPROC *));
 
-	arrayP->procs[arrayP->numProcs] = proc;
+	arrayP->procs[index] = proc;
 	arrayP->numProcs++;
 
 	LWLockRelease(ProcArrayLock);
@@ -214,7 +222,8 @@ ProcArrayRemove(PGPROC *proc, TransactionId latestXid)
 	{
 		if (arrayP->procs[index] == proc)
 		{
-			arrayP->procs[index] = arrayP->procs[arrayP->numProcs - 1];
+			memmove(&arrayP->procs[index], &arrayP->procs[index + 1],
+					(arrayP->numProcs - index - 1) * sizeof(PGPROC *));
 			arrayP->procs[arrayP->numProcs - 1] = NULL; /* for debugging */
 			arrayP->numProcs--;
 			LWLockRelease(ProcArrayLock);
@@ -233,7 +242,7 @@ void
 ProcArrayEndGxact(void)
 {
 	Assert(LWLockHeldByMe(ProcArrayLock));
-	initGxact(&MyProc->gxact);
+	initGxact(MyGxact);
 }
 
 /*
@@ -1075,7 +1084,7 @@ getAllDistributedXactStatus(TMGALLXACTSTATUS **allDistributedXactStatus)
 		for (i = 0; i < count; i++)
 		{
 			PGPROC *proc = arrayP->procs[i];
-			TMGXACT *gxact = &proc->gxact;
+			TMGXACT *gxact = &ProcGlobal->allGxacts[proc->pgprocno];
 
 			all->statusArray[i].gxid = gxact->gxid;
 			if (strlen(gxact->gid) >= TMGIDSIZE)
@@ -1154,7 +1163,7 @@ getDtxCheckPointInfo(char **result, int *result_size)
 	{
 		TMGXACT_LOG *gxact_log;
 		PGPROC  *proc = arrayP->procs[i];
-		TMGXACT *gxact = &proc->gxact;
+		TMGXACT *gxact = &ProcGlobal->allGxacts[proc->pgprocno];
 
 		if (!includeInCheckpointIsNeeded(gxact))
 			continue;
@@ -1215,6 +1224,7 @@ CreateDistributedSnapshot(DistributedSnapshotWithLocalMapping *distribSnapshotWi
 	DistributedTransactionId globalXminDistributedSnapshots;
 	DistributedSnapshot *ds;
 	ProcArrayStruct *arrayP = procArray;
+	PGPROC **pgprocs;
 
 	Assert(LWLockHeldByMe(ProcArrayLock));
 	if (*shmNumCommittedGxacts != 0)
@@ -1241,10 +1251,12 @@ CreateDistributedSnapshot(DistributedSnapshotWithLocalMapping *distribSnapshotWi
 	 * Gather up current in-progress global transactions for the distributed
 	 * snapshot.
 	 */
+	pgprocs = arrayP->procs;
 	for (i = 0; i < arrayP->numProcs; i++)
 	{
-		PGPROC	*proc = arrayP->procs[i];
-		TMGXACT	*gxact_candidate = &proc->gxact;
+		int pgprocno = pgprocs[i]->pgprocno;
+		volatile TMGXACT *gxact_candidate = &ProcGlobal->allGxacts[pgprocno];
+
 		volatile DistributedTransactionId gxid;
 		DistributedTransactionId dxid;
 
@@ -1280,7 +1292,7 @@ CreateDistributedSnapshot(DistributedSnapshotWithLocalMapping *distribSnapshotWi
 			xmax = gxid;
 		}
 
-		if (proc == MyProc)
+		if (gxact_candidate == MyGxact)
 			continue;
 
 		if (count >= ds->maxCount)
@@ -1324,8 +1336,8 @@ CreateDistributedSnapshot(DistributedSnapshotWithLocalMapping *distribSnapshotWi
 	ds->xmax = xmax;
 	ds->count = count;
 
-	if (xmin < MyProc->gxact.xminDistributedSnapshot)
-		MyProc->gxact.xminDistributedSnapshot = xmin;
+	if (xmin < MyGxact->xminDistributedSnapshot)
+		MyGxact->xminDistributedSnapshot = xmin;
 
 	elog((Debug_print_full_dtm ? LOG : DEBUG5),
 		 "CreateDistributedSnapshot distributed snapshot has xmin = %u, count = %u, xmax = %u.",
@@ -1333,7 +1345,7 @@ CreateDistributedSnapshot(DistributedSnapshotWithLocalMapping *distribSnapshotWi
 	elog((Debug_print_snapshot_dtm ? LOG : DEBUG5),
 		 "[Distributed Snapshot #%u] *Create* (gxid = %u, '%s')",
 		 distribSnapshotId,
-		 MyProc->gxact.gxid,
+		 MyGxact->gxid,
 		 DtxContextToString(DistributedTransactionContext));
 
 	/*
