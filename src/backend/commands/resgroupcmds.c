@@ -220,6 +220,7 @@ CreateResourceGroup(CreateResourceGroupStmt *stmt)
 		/* Create os dependent part for this resource group */
 		ResGroupOps_CreateGroup(groupid);
 		ResGroupOps_SetCpuRateLimit(groupid, caps.cpuRateLimit);
+		ResGroupOps_SetMemoryLimit(groupid, caps.memLimit);
 	}
 	else if (Gp_role == GP_ROLE_DISPATCH)
 		ereport(WARNING,
