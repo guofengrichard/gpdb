@@ -19,6 +19,9 @@
 #include "utils/resgroup.h"
 #include "utils/relcache.h"
 
+#define RESGROUP_MEMORY_AUDITOR_NORMAL		(0)
+#define RESGROUP_MEMORY_AUDITOR_EXTERNAL	(1)
+
 extern void CreateResourceGroup(CreateResourceGroupStmt *stmt);
 extern void DropResourceGroup(DropResourceGroupStmt *stmt);
 extern void AlterResourceGroup(AlterResourceGroupStmt *stmt);

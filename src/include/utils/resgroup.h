@@ -54,6 +54,8 @@ typedef struct ResGroupCaps
 	ResGroupCap		memLimit;
 	ResGroupCap		memSharedQuota;
 	ResGroupCap		memSpillRatio;
+	ResGroupCap		memAuditor;			/* 0: normal group */
+										/* 1: external group */
 } ResGroupCaps;
 
 /*
