@@ -493,6 +493,7 @@ InitResGroups(void)
 
 		ResGroupOps_CreateGroup(groupId);
 		ResGroupOps_SetCpuRateLimit(groupId, cpuRateLimit);
+		ResGroupOps_SetMemoryLimit(groupId, caps.memLimit);
 
 		numGroups++;
 		Assert(numGroups <= MaxResourceGroups);
@@ -760,6 +761,15 @@ ResGroupGetStat(Oid groupId, ResGroupStatType type)
 	LWLockRelease(ResGroupLock);
 
 	return result;
+}
+
+/*
+ * Get the number of primary segments on this host
+ */
+int
+ResGroupGetSegmentNum()
+{
+	return (Gp_role == GP_ROLE_EXECUTE ? host_segments : pResGroupControl->segmentsOnMaster);
 }
 
 static char *
