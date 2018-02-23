@@ -162,6 +162,9 @@ struct ResGroupData
 
 	bool		lockedForDrop;  /* true if resource group is dropped but not committed yet */
 
+	int32		memGap;			/* (memory limit (before alter) - memory expected (after alter)) */
+								/* For normal resource group, it is always 0. */
+
 	int32		memExpected;		/* expected memory chunks according to current caps */
 	int32		memQuotaGranted;	/* memory chunks for quota part */
 	int32		memSharedGranted;	/* memory chunks for shared part */
@@ -311,6 +314,7 @@ static ResGroupSlotData *sessionGetSlot(void);
 static void sessionResetSlot(void);
 
 static void CallResGroupMemoryHooks(ResGroupMemoryHookType hook_type);
+static bool ResGroupIsExternal(const ResGroupCaps *caps);
 
 #ifdef USE_ASSERT_CHECKING
 static bool selfHasGroup(void);
@@ -666,7 +670,8 @@ ResGroupCreateOnAbort(Oid groupId)
 void
 ResGroupAlterOnCommit(Oid groupId,
 					  ResGroupLimitType limittype,
-					  const ResGroupCaps *caps)
+					  const ResGroupCaps *caps,
+					  int32 memGap)
 {
 	ResGroupData	*group;
 	bool			shouldWakeUp;
@@ -686,6 +691,11 @@ ResGroupAlterOnCommit(Oid groupId,
 		if (limittype == RESGROUP_LIMIT_TYPE_CPU)
 		{
 			ResGroupOps_SetCpuRateLimit(groupId, caps->cpuRateLimit);
+		}
+		else if (ResGroupIsExternal(caps) && limittype == RESGROUP_LIMIT_TYPE_MEMORY)
+		{
+			Assert(pResGroupControl->totalChunks > 0);
+			group->memGap += pResGroupControl->totalChunks * memGap / 100;
 		}
 		else if (limittype != RESGROUP_LIMIT_TYPE_MEMORY_SPILL_RATIO)
 		{
@@ -783,6 +793,14 @@ ResGroupGetStat(Oid groupId, ResGroupStatType type)
 	return result;
 }
 
+static bool
+ResGroupIsExternal(const ResGroupCaps *caps)
+{
+	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
+
+	return caps->memAuditor == RESGROUP_MEMORY_AUDITOR_EXTERNAL;
+}
+
 void
 RegisterResGroupMemoryHook(ResGroupMemoryHookType hook_type,
 		ResGroupMemoryHook hook, void *arg,
@@ -831,6 +849,63 @@ UnregisterResGroupMemoryHook(ResGroupMemoryHookType hook_type,
 			break;
 		}
 	}
+}
+
+int32
+ResGroup_GetMemoryExpected(Oid groupId)
+{
+	ResGroupData *group;
+	ResGroupCaps *caps;
+
+	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
+
+	group = groupHashFind(groupId, true);
+	caps = &group->caps;
+
+	return groupGetMemExpected(caps);
+}
+
+int32
+ResGroup_GetMemoryGap(Oid groupId)
+{
+	ResGroupData *group;
+
+	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
+
+	group = groupHashFind(groupId, true);
+
+	return group->memGap;
+}
+
+void
+ResGroup_SetMemoryGap(Oid groupId, int32 memGap)
+{
+	ResGroupData *group;
+
+	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
+
+	group = groupHashFind(groupId, true);
+
+	group->memGap = memGap;
+}
+
+void
+ResGroup_ReclaimMemoryFromExternal(Oid groupId, int32 chunks)
+{
+	if (chunks <= 0)
+		return;
+
+	mempoolRelease(groupId, chunks);
+	wakeupGroups(InvalidOid);
+}
+
+int32
+ResGroup_AssignMemoryToExternal(Oid groupId, int32 chunks)
+{
+	if (chunks <= 0)
+		return 0;
+
+	return mempoolReserve(groupId, chunks);
 }
 
 int
@@ -1065,6 +1140,7 @@ createGroup(Oid groupId, const ResGroupCaps *caps)
 	group->memQuotaUsed = 0;
 	memset(&group->totalQueuedTime, 0, sizeof(group->totalQueuedTime));
 	group->lockedForDrop = false;
+	group->memGap = 0;
 
 	group->memQuotaGranted = 0;
 	group->memSharedGranted = 0;
