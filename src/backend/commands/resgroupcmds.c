@@ -209,6 +209,7 @@ CreateResourceGroup(CreateResourceGroupStmt *stmt)
 	if (IsResGroupActivated())
 	{
 		Oid			*callbackArg;
+		int fd;
 
 		AllocResGroupEntry(groupid, &caps);
 
@@ -220,6 +221,10 @@ CreateResourceGroup(CreateResourceGroupStmt *stmt)
 		/* Create os dependent part for this resource group */
 		ResGroupOps_CreateGroup(groupid);
 		ResGroupOps_SetCpuRateLimit(groupid, caps.cpuRateLimit);
+
+		fd = ResGroupOps_LockGroup(groupid, "memory", true);
+		ResGroupOps_SetMemoryLimitByRate(groupid, caps.memLimit * ResGroup_GetSegmentNum());
+		ResGroupOps_UnLockGroup(groupid, fd);
 	}
 	else if (Gp_role == GP_ROLE_DISPATCH)
 		ereport(WARNING,
