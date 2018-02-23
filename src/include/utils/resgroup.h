@@ -143,6 +143,7 @@ extern int64 ResourceGroupGetQueryMemoryLimit(void);
 extern void ResGroupDumpInfo(StringInfo str);
 
 extern int ResGroupGetExtension(char *name);
+extern int ResGroup_GetSegmentNum(void);
 
 #define LOG_RESGROUP_DEBUG(...) \
 	do {if (Debug_resource_group) elog(__VA_ARGS__); } while(false);
