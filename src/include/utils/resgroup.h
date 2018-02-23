@@ -78,6 +78,18 @@ extern double gp_resource_group_memory_limit;
 typedef Oid (*resgroup_assign_hook_type)(void);
 extern PGDLLIMPORT resgroup_assign_hook_type resgroup_assign_hook;
 
+typedef bool (*ResGroupMemoryHook) (void *arg);
+typedef bool (*ResGroupMemoryHookCompareArg) (void *arg1, void *arg2);
+
+typedef enum
+{
+	RES_GROUP_MEMORY_HOOK_CLEAN = 0,
+	RES_GROUP_MEMORY_HOOK_DEC,
+	RES_GROUP_MEMORY_HOOK_INC,
+
+	RES_GROUP_MEMORY_HOOK_MAX
+} ResGroupMemoryHookType;
+
 /* Type of statistic information */
 typedef enum
 {
@@ -140,6 +152,14 @@ extern void ResGroupGetMemInfo(int *memLimit, int *slotQuota, int *sharedQuota);
 extern int64 ResourceGroupGetQueryMemoryLimit(void);
 
 extern void ResGroupDumpInfo(StringInfo str);
+
+extern void RegisterResGroupMemoryHook(ResGroupMemoryHookType hook_type,
+		ResGroupMemoryHook hook, void *arg,
+		ResGroupMemoryHookCompareArg compare);
+
+extern void UnregisterResGroupMemoryHook(ResGroupMemoryHookType hook_type,
+		ResGroupMemoryHook hook, void *arg,
+		ResGroupMemoryHookCompareArg compare);
 
 extern int ResGroup_GetSegmentNum(void);
 

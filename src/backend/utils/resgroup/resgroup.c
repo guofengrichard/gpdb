@@ -200,8 +200,22 @@ struct ResGroupControl
 	ResGroupData	groups[1];
 };
 
-/* hooks */
+/*
+ * hooks
+ */
+
 resgroup_assign_hook_type resgroup_assign_hook = NULL;
+
+typedef struct ResGroupMemoryHookItem
+{
+	struct ResGroupMemoryHookItem *next;
+	ResGroupMemoryHook memory_hook;
+	void	   *arg;
+} ResGroupMemoryHookItem;
+
+/* TODO need locks to protect hook list? */
+static ResGroupMemoryHookItem
+*ResGroup_memory_hooks[RES_GROUP_MEMORY_HOOK_MAX] = { NULL };
 
 /* static variables */
 
@@ -295,6 +309,8 @@ static void resgroupDumpFreeSlots(StringInfo str);
 static void sessionSetSlot(ResGroupSlotData *slot);
 static ResGroupSlotData *sessionGetSlot(void);
 static void sessionResetSlot(void);
+
+static void CallResGroupMemoryHooks(ResGroupMemoryHookType hook_type);
 
 #ifdef USE_ASSERT_CHECKING
 static bool selfHasGroup(void);
@@ -765,6 +781,56 @@ ResGroupGetStat(Oid groupId, ResGroupStatType type)
 	LWLockRelease(ResGroupLock);
 
 	return result;
+}
+
+void
+RegisterResGroupMemoryHook(ResGroupMemoryHookType hook_type,
+		ResGroupMemoryHook hook, void *arg,
+		ResGroupMemoryHookCompareArg compare)
+{
+	ResGroupMemoryHookItem *item;
+
+	if (compare == NULL)
+		return;
+
+	/* check if the hook fucntion is duplicated */
+	item = ResGroup_memory_hooks[hook_type];
+	for ( ; item; item = item->next)
+	{
+		if (item->memory_hook == hook && compare(item->arg, arg))
+			return;
+	}
+
+	item = (ResGroupMemoryHookItem *)
+		MemoryContextAlloc(TopMemoryContext, sizeof(ResGroupMemoryHookItem));
+	item->memory_hook = hook;
+	item->arg = arg;
+	item->next = ResGroup_memory_hooks[hook_type];
+	ResGroup_memory_hooks[hook_type] = item;
+}
+
+void
+UnregisterResGroupMemoryHook(ResGroupMemoryHookType hook_type,
+		ResGroupMemoryHook hook, void *arg,
+		ResGroupMemoryHookCompareArg compare)
+{
+	ResGroupMemoryHookItem *item;
+	ResGroupMemoryHookItem *prev;
+
+	prev = NULL;
+	item = ResGroup_memory_hooks[hook_type];
+	for ( ; item; prev = item, item = item->next)
+	{
+		if (item->memory_hook == hook && compare(item->arg, arg))
+		{
+			if (prev)
+				prev->next = item->next;
+			else
+				ResGroup_memory_hooks[hook_type] = item->next;
+			pfree(item);
+			break;
+		}
+	}
 }
 
 int
@@ -1395,6 +1461,7 @@ groupAcquireSlot(ResGroupInfo *pGroupInfo)
 	group = pGroupInfo->group;
 
 	LWLockAcquire(ResGroupLock, LW_EXCLUSIVE);
+	CallResGroupMemoryHooks(RES_GROUP_MEMORY_HOOK_INC);
 
 	/* Has the group been dropped? */
 	if (groupIsDropped(pGroupInfo))
@@ -2079,6 +2146,8 @@ UnassignResGroup(void)
 
 	LWLockAcquire(ResGroupLock, LW_EXCLUSIVE);
 
+	CallResGroupMemoryHooks(RES_GROUP_MEMORY_HOOK_CLEAN);
+
 	/* Sub proc memory accounting info from group and slot */
 	selfDetachResGroup(group, slot);
 
@@ -2107,6 +2176,8 @@ UnassignResGroup(void)
 		/* And finally release the overused memory quota */
 		mempoolAutoRelease(group);
 	}
+
+	CallResGroupMemoryHooks(RES_GROUP_MEMORY_HOOK_DEC);
 
 	LWLockRelease(ResGroupLock);
 
@@ -2170,6 +2241,8 @@ SwitchResGroupOnSegment(const char *buf, int len)
 		group->memQuotaUsed += slot->memQuota;
 		Assert(group->memQuotaUsed <= group->memQuotaGranted);
 		group->nRunning++;
+
+		CallResGroupMemoryHooks(RES_GROUP_MEMORY_HOOK_INC);
 	}
 
 	selfAttachResGroup(group, slot);
@@ -3123,3 +3196,120 @@ sessionResetSlot(void)
 
 	MySessionState->resGroupSlot = NULL;
 }
+
+static void
+CallResGroupMemoryHooks(ResGroupMemoryHookType hook_type)
+{
+	ResGroupMemoryHookItem *item;
+	ResGroupMemoryHookItem *prev;
+	ResGroupMemoryHookItem *next;
+	ResGroupMemoryHook hook;
+	void *arg;
+
+	prev = NULL;
+	item = ResGroup_memory_hooks[hook_type];
+
+	while(item)
+	{
+		next = item->next;
+
+		hook = item->memory_hook;
+		arg = item->arg;
+
+		if (hook(arg))
+		{
+			if (prev)
+				prev->next = next;
+			else
+				ResGroup_memory_hooks[hook_type] = next;
+			pfree(item);
+		}
+		else
+		{
+			prev = item;
+		}
+
+		item = next;
+	}
+}
+
+#if 0
+
+static bool
+ResGroupPLDec(void *arg)
+{
+	Oid groupId;
+	int32 memory_usage;
+	int32 memory_limit;
+	int32 memory_gap;
+	int32 pl_freeable_memory;
+	int32 pl_decreased_memory;
+	int fd;
+
+	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
+
+	groupId = *(Oid *)arg;
+
+	memory_gap = ResGroup_GetMemoryGap(groupId);
+
+	if (memory_gap <= 0)
+		return true;
+
+	/* Lock the cgroup node to decreate the memory limit in an exclusive way
+	 *      * Since other segment may change the memory limit at the same time.
+	 *           * */
+	fd = ResGroupOps_LockGroup(groupId, "memory", true);
+	memory_limit = ResGroupOps_GetMemoryLimit(groupId);
+	memory_usage = ResGroupOps_GetMemoryUsage(groupId);
+	pl_freeable_memory = memory_limit*0.8 - memory_usage;
+
+	if (pl_freeable_memory <= 0)
+	{
+		ResGroupOps_UnLockGroup(groupId, fd);
+		return true;
+	}
+	pl_decreased_memory = Min(pl_freeable_memory, memory_gap);
+	ResGroupOps_SetMemoryLimitByValue(groupId, memory_limit - pl_decreased_memory);
+	ResGroupOps_UnLockGroup(groupId, fd);
+
+	ResGroup_ReclaimMemoryFromExternal(groupId, pl_decreased_memory);
+	ResGroup_SetMemoryGap(groupId, memory_gap - pl_decreased_memory);
+
+	return true;
+}
+
+static bool
+ResGroupPLInc(void *arg)
+{
+	Oid groupId;
+	int32 memory_limit;
+	int32 pl_increased_memory;
+	int32 memory_gap;
+
+	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
+
+	groupId = *(Oid *)arg;
+
+	memory_gap = ResGroup_GetMemoryGap(groupId);
+
+	if (memory_gap >= 0)
+		return true;
+
+	pl_increased_memory = ResGroup_AssignMemoryToExternal(groupId, memory_gap * -1);
+
+	if (pl_increased_memory > 0)
+	{
+		int fd;
+
+		fd = ResGroupOps_LockGroup(groupId, "memory", true);
+		memory_limit = ResGroupOps_GetMemoryLimit(groupId);
+		ResGroupOps_SetMemoryLimitByValue(groupId, memory_limit + pl_increased_memory);
+		ResGroupOps_UnLockGroup(groupId, fd);
+
+		ResGroup_SetMemoryGap(groupId, memory_gap + pl_increased_memory);
+	}
+
+	return true;
+}
+
+#endif
