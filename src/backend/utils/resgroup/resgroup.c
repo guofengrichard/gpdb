@@ -315,6 +315,9 @@ static void sessionResetSlot(void);
 
 static void CallResGroupMemoryHooks(ResGroupMemoryHookType hook_type);
 static bool ResGroupIsExternal(const ResGroupCaps *caps);
+static void groupApplyCgroupMem(ResGroupData *group);
+static void groupApplyCgroupMemDec(ResGroupData *group);
+static void groupApplyCgroupMemInc(ResGroupData *group);
 
 #ifdef USE_ASSERT_CHECKING
 static bool selfHasGroup(void);
@@ -696,6 +699,7 @@ ResGroupAlterOnCommit(Oid groupId,
 		{
 			Assert(pResGroupControl->totalChunks > 0);
 			group->memGap += pResGroupControl->totalChunks * memGap / 100;
+			groupApplyCgroupMem(group);
 		}
 		else if (limittype != RESGROUP_LIMIT_TYPE_MEMORY_SPILL_RATIO)
 		{
@@ -3307,6 +3311,77 @@ CallResGroupMemoryHooks(ResGroupMemoryHookType hook_type)
 
 		item = next;
 	}
+}
+
+static void
+groupApplyCgroupMem(ResGroupData *group)
+{
+	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
+
+	if (group->memGap == 0)
+		return;
+
+	if (group->memGap > 0) // Decrease
+	{
+		groupApplyCgroupMemDec(group);
+	}
+	else
+	{
+		groupApplyCgroupMemInc(group);
+	}
+}
+
+static void
+groupApplyCgroupMemDec(ResGroupData *group)
+{
+	int32 memory_usage;
+	int32 memory_limit;
+	int32 memory_dec;
+	int fd;
+
+	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
+	Assert(group->memGap > 0);
+
+	fd = ResGroupOps_LockGroup(group->groupId, "memory", true);
+	memory_limit = ResGroupOps_GetMemoryLimit(group->groupId);
+	memory_usage = ResGroupOps_GetMemoryUsage(group->groupId);
+	memory_dec = memory_limit /* * RED_ZONE_BUF*/ - memory_usage;
+
+	if (memory_dec <= 0)
+	{
+		ResGroupOps_UnLockGroup(group->groupId, fd);
+		return;
+	}
+	memory_dec = Min(memory_dec, group->memGap);
+
+	ResGroupOps_SetMemoryLimitByValue(group->groupId, memory_limit - memory_dec);
+	ResGroupOps_UnLockGroup(group->groupId, fd);
+
+	ResGroup_ReclaimMemoryFromExternal(group->groupId, memory_dec);
+	group->memGap -= memory_dec;
+}
+
+static void
+groupApplyCgroupMemInc(ResGroupData *group)
+{
+	int32 memory_limit;
+	int32 memory_inc;
+	int fd;
+
+	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
+	Assert(group->memGap < 0);
+
+	memory_inc = ResGroup_AssignMemoryToExternal(group->groupId, group->memGap * -1);
+
+	if (memory_inc <= 0)
+		return;
+
+	fd = ResGroupOps_LockGroup(group->groupId, "memory", true);
+	memory_limit = ResGroupOps_GetMemoryLimit(group->groupId);
+	ResGroupOps_SetMemoryLimitByValue(group->groupId, memory_limit + memory_inc);
+	ResGroupOps_UnLockGroup(group->groupId, fd);
+
+	group->memGap += memory_inc;
 }
 
 #if 0
