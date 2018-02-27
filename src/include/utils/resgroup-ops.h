@@ -36,5 +36,6 @@ extern int32 ResGroupOps_GetMemoryUsage(Oid group);
 extern int32 ResGroupOps_GetMemoryLimit(Oid group);
 extern int ResGroupOps_GetCpuCores(void);
 extern int ResGroupOps_GetTotalMemory(void);
+extern bool ResGroupOps_ContainsDir(Oid group, const char *comp);
 
 #endif   /* RES_GROUP_OPS_H */

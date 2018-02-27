@@ -200,3 +200,10 @@ ResGroupOps_GetTotalMemory(void)
 	unsupported_system();
 	return 0;
 }
+
+bool
+ResGroupOps_ContainsDir(Oid group, const char *comp)
+{
+	unsupported_system();
+	return false;
+}

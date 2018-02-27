@@ -31,6 +31,7 @@
 #include <sys/sysinfo.h>
 #include <stdio.h>
 #include <mntent.h>
+#include <dirent.h>
 
 /*
  * Interfaces for OS dependent operations.
@@ -992,4 +993,52 @@ ResGroupOps_GetTotalMemory(void)
 	 */
 	total = Min(outTotal, swap + ram); 
 	return total >> BITS_IN_MB;
+}
+
+bool
+ResGroupOps_ContainsDir(Oid group, const char *comp)
+{
+	char path[MAXPGPATH];
+	size_t pathsize = sizeof(path);
+	struct stat s_buf;
+	struct dirent *filename;
+	DIR *dp;
+
+	buildPath(group, NULL, comp, "", path, pathsize);
+
+	stat(path,&s_buf);
+
+	if(!S_ISDIR(s_buf.st_mode))
+		return false;
+
+	dp = opendir(path);
+	if (dp == NULL)
+	{
+		CGROUP_ERROR("can't open dir: %s: %s",
+					 path, strerror(errno));
+		return false;
+	}
+
+	while((filename = readdir(dp)))
+	{
+		char file_path[MAXPGPATH];
+
+		if (strcmp(filename->d_name, ".") == 0 ||
+				strcmp(filename->d_name, "..") == 0)
+			continue;
+
+		snprintf(file_path, sizeof(file_path), "%s/%s",
+				path, filename->d_name);
+
+		stat(file_path, &s_buf);
+
+		if (S_ISDIR(s_buf.st_mode))
+		{
+			closedir(dp);
+			return true;
+		}
+	}
+
+	closedir(dp);
+	return false;
 }
