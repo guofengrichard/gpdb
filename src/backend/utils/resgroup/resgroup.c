@@ -148,6 +148,16 @@ struct ResGroupSlotData
 };
 
 /*
+ *
+ */
+typedef struct ResGroupOperations
+{
+	void (*group_check_for_drop) (Oid groupId, char *name);
+	void (*group_alter_mem) (Oid groupId, ResGroupData *group);
+	void (*group_release_mem) (Oid groupId, ResGroupData *group);
+} ResGroupOperations;
+
+/*
  * Resource group information.
  */
 struct ResGroupData
@@ -175,6 +185,12 @@ struct ResGroupData
 	 */
 	int32		memUsage;
 	int32		memSharedUsage;
+
+	/*
+	 * operation functions for resource group
+	 */
+	ResGroupOperations	group_ops;
+	void				*ext_handle;
 };
 
 struct ResGroupControl
@@ -245,9 +261,10 @@ static int32 mempoolAutoRelease(ResGroupData *group);
 static int32 mempoolAutoReserve(ResGroupData *group, const ResGroupCaps *caps);
 static ResGroupData *groupHashNew(Oid groupId);
 static ResGroupData *groupHashFind(Oid groupId, bool raise);
-static void groupHashRemove(Oid groupId);
+static ResGroupData *groupHashRemove(Oid groupId);
 static void waitOnGroup(ResGroupData *group);
 static ResGroupData *createGroup(Oid groupId, const ResGroupCaps *caps);
+static void removeGroup(Oid groupId);
 static void AtProcExit_ResGroup(int code, Datum arg);
 static void groupWaitCancel(void);
 static int32 groupReserveMemQuota(ResGroupData *group);
@@ -302,6 +319,11 @@ static void resgroupDumpFreeSlots(StringInfo str);
 static void sessionSetSlot(ResGroupSlotData *slot);
 static ResGroupSlotData *sessionGetSlot(void);
 static void sessionResetSlot(void);
+
+static void ResGroupBindOperations(ResGroupData *group);
+static void ResGroupCheckForDropLocal(Oid groupId, char *name);
+static void ResGroupReleaseMemLocal(Oid groupId, ResGroupData *group);
+static void ResGroupAlterMemLocal(Oid groupId, ResGroupData *group);
 
 #ifdef USE_ASSERT_CHECKING
 static bool selfHasGroup(void);
@@ -527,38 +549,17 @@ exit:
 	ResourceOwnerDelete(owner);
 }
 
-/*
- * Check resource group status when DROP RESOURCE GROUP
- *
- * Errors out if there're running transactions, otherwise lock the resource group.
- * New transactions will be queued if the resource group is locked.
- */
 void
 ResGroupCheckForDrop(Oid groupId, char *name)
 {
-	ResGroupData	*group;
-
-	if (Gp_role != GP_ROLE_DISPATCH)
-		return;
+	ResGroupData *group;
 
 	LWLockAcquire(ResGroupLock, LW_EXCLUSIVE);
 
 	group = groupHashFind(groupId, true);
 
-	if (group->nRunning > 0)
-	{
-		int nQuery = group->nRunning + group->waitProcs.size;
-
-		Assert(name != NULL);
-		ereport(ERROR,
-				(errcode(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-				 errmsg("cannot drop resource group \"%s\"", name),
-				 errhint(" The resource group is currently managing %d query(ies) and cannot be dropped.\n"
-						 "\tTerminate the queries first or try dropping the group later.\n"
-						 "\tThe view pg_stat_activity tracks the queries managed by resource groups.", nQuery)));
-	}
-
-	lockResGroupForDrop(group);
+	if (group->group_ops.group_check_for_drop)
+		group->group_ops.group_check_for_drop(groupId, name);
 
 	LWLockRelease(ResGroupLock);
 }
@@ -593,7 +594,7 @@ ResGroupDropFinish(Oid groupId, bool isCommit)
 
 		if (isCommit)
 		{
-			groupHashRemove(groupId);
+			removeGroup(groupId);
 			ResGroupOps_DestroyGroup(groupId);
 		}
 	}
@@ -630,7 +631,7 @@ ResGroupCreateOnAbort(Oid groupId)
 	PG_TRY();
 	{
 		savedInterruptHoldoffCount = InterruptHoldoffCount;
-		groupHashRemove(groupId);
+		removeGroup(groupId);
 		/* remove the os dependent part for this resource group */
 		ResGroupOps_DestroyGroup(groupId);
 	}
@@ -660,7 +661,6 @@ ResGroupAlterOnCommit(Oid groupId,
 					  const ResGroupCaps *caps)
 {
 	ResGroupData	*group;
-	bool			shouldWakeUp;
 	volatile int	savedInterruptHoldoffCount;
 
 	Assert(caps != NULL);
@@ -680,11 +680,8 @@ ResGroupAlterOnCommit(Oid groupId,
 		}
 		else if (limittype != RESGROUP_LIMIT_TYPE_MEMORY_SPILL_RATIO)
 		{
-			shouldWakeUp = groupApplyMemCaps(group);
-
-			wakeupSlots(group, true);
-			if (shouldWakeUp)
-				wakeupGroups(groupId);
+			if (group->group_ops.group_alter_mem)
+				group->group_ops.group_alter_mem(groupId, group);
 		}
 	}
 	PG_CATCH();
@@ -991,6 +988,27 @@ ResourceGroupGetQueryMemoryLimit(void)
 	return memSpill << VmemTracker_GetChunkSizeInBits();
 }
 
+static void
+removeGroup(Oid groupId)
+{
+	ResGroupData *group;
+
+	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
+	Assert(OidIsValid(groupId));
+
+	group = groupHashRemove(groupId);
+
+	if (group->group_ops.group_release_mem)
+		group->group_ops.group_release_mem(groupId, group);
+
+
+//	if (group->ext_handle)
+//		dlclose(group->ext_handle);
+
+	group->groupId = InvalidOid;
+	wakeupGroups(groupId);
+}
+
 /*
  * createGroup -- initialize the elements for a resource group.
  *
@@ -1020,6 +1038,8 @@ createGroup(Oid groupId, const ResGroupCaps *caps)
 	group->memSharedUsage = 0;
 	group->memQuotaUsed = 0;
 	memset(&group->totalQueuedTime, 0, sizeof(group->totalQueuedTime));
+	memset(&group->group_ops, 0, sizeof(group->group_ops));
+	group->ext_handle = NULL;
 	group->lockedForDrop = false;
 
 	group->memQuotaGranted = 0;
@@ -1029,7 +1049,38 @@ createGroup(Oid groupId, const ResGroupCaps *caps)
 	chunks = mempoolReserve(groupId, group->memExpected);
 	groupRebalanceQuota(group, chunks, caps);
 
+	/*
+	 * TODO load extension according to caps->memExtension
+	 */
+	if (caps->memExtension != RESGROUP_DEFAULT_EXTENSION)
+	{
+		// load extension
+//		group->ext_handle = ResGroupLoadExtension(caps->memExtension);
+	}
+
+	ResGroupBindOperations(group);
+
 	return group;
+}
+
+static void
+ResGroupBindOperations(ResGroupData *group)
+{
+	if (group->caps.memExtension == RESGROUP_DEFAULT_EXTENSION)
+	{
+		//Bind local operations
+		group->group_ops.group_check_for_drop = ResGroupCheckForDropLocal;
+		group->group_ops.group_alter_mem = ResGroupAlterMemLocal;
+		group->group_ops.group_release_mem = ResGroupReleaseMemLocal;
+	}
+	else if (group->ext_handle == NULL)
+	{
+		//Assign NULL to the function pointers.
+	}
+	else
+	{
+		//dlsym	
+	}
 }
 
 /*
@@ -2321,7 +2372,6 @@ groupHashFind(Oid groupId, bool raise)
 	return &pResGroupControl->groups[entry->index];
 }
 
-
 /*
  * groupHashRemove -- remove the group for a given oid.
  *
@@ -2331,7 +2381,7 @@ groupHashFind(Oid groupId, bool raise)
  *	The resource group lightweight lock (ResGroupLock) *must* be held for
  *	this operation.
  */
-static void
+static ResGroupData *
 groupHashRemove(Oid groupId)
 {
 	bool		found;
@@ -2351,12 +2401,8 @@ groupHashRemove(Oid groupId)
 						groupId)));
 
 	group = &pResGroupControl->groups[entry->index];
-	mempoolRelease(groupId, group->memQuotaGranted + group->memSharedGranted);
-	group->memQuotaGranted = 0;
-	group->memSharedGranted = 0;
-	group->groupId = InvalidOid;
 
-	wakeupGroups(groupId);
+	return group;
 }
 
 /* Process exit without waiting for slot or received SIGTERM */
@@ -3144,4 +3190,62 @@ sessionResetSlot(void)
 	Assert(MySessionState->resGroupSlot != NULL);
 
 	MySessionState->resGroupSlot = NULL;
+}
+
+/*
+ * Check resource group status when DROP RESOURCE GROUP
+ *
+ * Errors out if there're running transactions, otherwise lock the resource group.
+ * New transactions will be queued if the resource group is locked.
+ */
+static void
+ResGroupCheckForDropLocal(Oid groupId, char *name)
+{
+	ResGroupData	*group;
+
+	if (Gp_role != GP_ROLE_DISPATCH)
+		return;
+
+	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
+
+	group = groupHashFind(groupId, true);
+
+	if (group->nRunning > 0)
+	{
+		int nQuery = group->nRunning + group->waitProcs.size;
+
+		Assert(name != NULL);
+		ereport(ERROR,
+				(errcode(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+				 errmsg("cannot drop resource group \"%s\"", name),
+				 errhint(" The resource group is currently managing %d query(ies) and cannot be dropped.\n"
+						 "\tTerminate the queries first or try dropping the group later.\n"
+						 "\tThe view pg_stat_activity tracks the queries managed by resource groups.", nQuery)));
+	}
+
+	lockResGroupForDrop(group);
+}
+
+static void
+ResGroupAlterMemLocal(Oid groupId, ResGroupData *group)
+{
+	bool			shouldWakeUp;
+
+	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
+
+	shouldWakeUp = groupApplyMemCaps(group);
+
+	wakeupSlots(group, true);
+	if (shouldWakeUp)
+		wakeupGroups(groupId);
+}
+
+static void
+ResGroupReleaseMemLocal(Oid groupId, ResGroupData *group)
+{
+	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
+
+	mempoolRelease(groupId, group->memQuotaGranted + group->memSharedGranted);
+	group->memQuotaGranted = 0;
+	group->memSharedGranted = 0;
 }

@@ -19,6 +19,8 @@
 #include "utils/resgroup.h"
 #include "utils/relcache.h"
 
+#define RESGROUP_DEFAULT_EXTENSION (0)
+
 extern void CreateResourceGroup(CreateResourceGroupStmt *stmt);
 extern void DropResourceGroup(DropResourceGroupStmt *stmt);
 extern void AlterResourceGroup(AlterResourceGroupStmt *stmt);
