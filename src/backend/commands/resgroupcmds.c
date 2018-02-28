@@ -58,6 +58,13 @@
 #define RESGROUP_MIN_MEMORY_SPILL_RATIO		(0)
 #define RESGROUP_MAX_MEMORY_SPILL_RATIO		(100)
 
+static const char *ResGroupExtension[] =
+{
+	"none", //0
+	"plcontainer", // 1
+	NULL
+};
+
 /*
  * The context to pass to callback in ALTER resource group
  */
@@ -86,6 +93,9 @@ static void createResgroupCallback(XactEvent event, void *arg);
 static void dropResgroupCallback(XactEvent event, void *arg);
 static void alterResgroupCallback(XactEvent event, void *arg);
 
+static int ResGroupGetExtension(char *name);
+static void *ResGroupLoadExtension(int extension);
+
 /*
  * CREATE RESOURCE GROUP
  */
@@ -103,6 +113,7 @@ CreateResourceGroup(CreateResourceGroupStmt *stmt)
 	bool		new_record_nulls[Natts_pg_resgroup];
 	ResGroupCaps caps;
 	int			nResGroups;
+	void		*ext_handle;
 
 	/* Permission check - only superuser can create groups. */
 	if (!superuser())
@@ -121,6 +132,11 @@ CreateResourceGroup(CreateResourceGroupStmt *stmt)
 
 	MemSet(&caps, 0, sizeof(caps));
 	parseStmtOptions(stmt, &caps);
+
+	/*
+	 * TODO load extension according to caps->memExtension
+	 */
+	ext_handle = ResGroupLoadExtension(caps.memExtension);
 
 	/*
 	 * both CREATE and ALTER resource group need check the sum of cpu_rate_limit
@@ -212,7 +228,7 @@ CreateResourceGroup(CreateResourceGroupStmt *stmt)
 		Oid			*callbackArg;
 		int fd;
 
-		AllocResGroupEntry(groupid, &caps);
+		AllocResGroupEntry(groupid, &caps, ext_handle);
 
 		/* Argument of callback function should be allocated in heap region */
 		callbackArg = (Oid *)MemoryContextAlloc(TopMemoryContext, sizeof(Oid));
@@ -1216,4 +1232,39 @@ str2Int(const char *str, const char *prop)
 				errmsg("%s requires a numeric value", prop)));
 
 	return floor(val);
+}
+
+static int
+ResGroupGetExtension(char *name)
+{
+	int index = 0;
+	while(ResGroupExtension[index] != NULL)
+	{
+		if (strcmp(ResGroupExtension[index], name) == 0)
+			return index;
+
+		index ++;
+	}
+
+	return -1;
+}
+
+static void *
+ResGroupLoadExtension(int extension)
+{
+	void *ext_handle;
+
+	if (extension == RESGROUP_DEFAULT_EXTENSION)
+		return NULL;
+
+	//ext_handle = dlopen
+	ext_handle = NULL;
+	if (!ext_handle)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("extension %s cannot be loaded",
+					 ResGroupExtension[extension])));
+
+
+	return ext_handle;
 }

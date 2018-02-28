@@ -100,7 +100,9 @@ extern void ResGroupControlInit(void);
 /* Load resource group information from catalog */
 extern void	InitResGroups(void);
 
-extern void AllocResGroupEntry(Oid groupId, const ResGroupCaps *caps);
+extern void AllocResGroupEntry(Oid groupId,
+							   const ResGroupCaps *caps,
+							   void *ext_handle);
 
 extern void SerializeResGroupInfo(StringInfo str);
 extern void DeserializeResGroupInfo(struct ResGroupCaps *capsOut,
@@ -142,7 +144,6 @@ extern int64 ResourceGroupGetQueryMemoryLimit(void);
 
 extern void ResGroupDumpInfo(StringInfo str);
 
-extern int ResGroupGetExtension(char *name);
 extern int ResGroup_GetSegmentNum(void);
 
 #define LOG_RESGROUP_DEBUG(...) \
