@@ -42,6 +42,8 @@
 #define RESGROUP_DEFAULT_MEM_SHARED_QUOTA (20)
 #define RESGROUP_DEFAULT_MEM_SPILL_RATIO (20)
 
+#define RESGROUP_DEFAULT_EXTENSION (0)
+
 #define RESGROUP_MIN_CONCURRENCY	(0)
 #define RESGROUP_MAX_CONCURRENCY	(MaxConnections)
 
@@ -68,7 +70,7 @@ typedef struct {
 
 static int str2Int(const char *str, const char *prop);
 static ResGroupLimitType getResgroupOptionType(const char* defname);
-static ResGroupCap getResgroupOptionValue(DefElem *defel);
+static ResGroupCap getResgroupOptionValue(DefElem *defel, int type);
 static const char *getResgroupOptionName(ResGroupLimitType type);
 static void checkResgroupCapLimit(ResGroupLimitType type, ResGroupCap value);
 static void parseStmtOptions(CreateResourceGroupStmt *stmt, ResGroupCaps *caps);
@@ -357,7 +359,12 @@ AlterResourceGroup(AlterResourceGroupStmt *stmt)
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("option \"%s\" not recognized", defel->defname)));
 
-	value = getResgroupOptionValue(defel);
+	if (limitType == RESGROUP_LIMIT_TYPE_EXTENSION)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("extension alter is not supported")));
+
+	value = getResgroupOptionValue(defel, limitType);
 	checkResgroupCapLimit(limitType, value);
 
 	/*
@@ -663,6 +670,8 @@ getResgroupOptionType(const char* defname)
 		return RESGROUP_LIMIT_TYPE_MEMORY_SHARED_QUOTA;
 	else if (strcmp(defname, "memory_spill_ratio") == 0)
 		return RESGROUP_LIMIT_TYPE_MEMORY_SPILL_RATIO;
+	else if (strcmp(defname, "extension") == 0)
+		return RESGROUP_LIMIT_TYPE_EXTENSION;
 	else
 		return RESGROUP_LIMIT_TYPE_UNKNOWN;
 }
@@ -671,9 +680,19 @@ getResgroupOptionType(const char* defname)
  * Get capability value from DefElem, convert from int64 to int
  */
 static ResGroupCap
-getResgroupOptionValue(DefElem *defel)
+getResgroupOptionValue(DefElem *defel, int type)
 {
-	int64 value = defGetInt64(defel);
+	int64 value;
+	if (type == RESGROUP_LIMIT_TYPE_EXTENSION)
+	{
+		char *ext_name = defGetString(defel);
+		value = ResGroupGetExtension(ext_name);
+	}
+	else
+	{
+		value = defGetInt64(defel);
+	}
+
 	if (value < INT_MIN || value > INT_MAX)
 		ereport(ERROR,
 				(errcode(ERRCODE_SYNTAX_ERROR),
@@ -765,6 +784,13 @@ checkResgroupCapLimit(ResGroupLimitType type, int value)
 								   RESGROUP_MAX_MEMORY_SPILL_RATIO)));
 				break;
 
+			case RESGROUP_LIMIT_TYPE_EXTENSION:
+				if (value < 0)
+					ereport(ERROR,
+							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+							errmsg("invalid extension name")));
+				break;
+
 			default:
 				Assert(!"unexpected options");
 				break;
@@ -803,7 +829,7 @@ parseStmtOptions(CreateResourceGroupStmt *stmt, ResGroupCaps *caps)
 		else
 			mask |= 1 << type;
 
-		value = getResgroupOptionValue(defel);
+		value = getResgroupOptionValue(defel, type);
 		checkResgroupCapLimit(type, value);
 
 		capArray[type] = value;
@@ -823,6 +849,9 @@ parseStmtOptions(CreateResourceGroupStmt *stmt, ResGroupCaps *caps)
 
 	if (!(mask & (1 << RESGROUP_LIMIT_TYPE_MEMORY_SPILL_RATIO)))
 		caps->memSpillRatio = RESGROUP_DEFAULT_MEM_SPILL_RATIO;
+
+	if (!(mask & (1 << RESGROUP_LIMIT_TYPE_EXTENSION)))
+		caps->memExtension = RESGROUP_DEFAULT_EXTENSION;
 }
 
 /*
@@ -918,6 +947,10 @@ insertResgroupCapabilities(Relation rel, Oid groupId, ResGroupCaps *caps)
 	sprintf(value, "%d", caps->memSpillRatio);
 	insertResgroupCapabilityEntry(rel, groupId,
 								  RESGROUP_LIMIT_TYPE_MEMORY_SPILL_RATIO, value);
+
+	sprintf(value, "%d", caps->memExtension);
+	insertResgroupCapabilityEntry(rel, groupId,
+								  RESGROUP_LIMIT_TYPE_EXTENSION, value);
 }
 
 /*

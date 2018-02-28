@@ -54,6 +54,7 @@ typedef struct ResGroupCaps
 	ResGroupCap		memLimit;
 	ResGroupCap		memSharedQuota;
 	ResGroupCap		memSpillRatio;
+	ResGroupCap		memExtension;
 } ResGroupCaps;
 
 /*
@@ -140,6 +141,8 @@ extern void ResGroupGetMemInfo(int *memLimit, int *slotQuota, int *sharedQuota);
 extern int64 ResourceGroupGetQueryMemoryLimit(void);
 
 extern void ResGroupDumpInfo(StringInfo str);
+
+extern int ResGroupGetExtension(char *name);
 
 #define LOG_RESGROUP_DEBUG(...) \
 	do {if (Debug_resource_group) elog(__VA_ARGS__); } while(false);
