@@ -28,6 +28,7 @@
 #include "commands/comment.h"
 #include "commands/defrem.h"
 #include "commands/resgroupcmds.h"
+#include "dynloader.h"
 #include "miscadmin.h"
 #include "utils/builtins.h"
 #include "utils/datetime.h"
@@ -228,12 +229,12 @@ CreateResourceGroup(CreateResourceGroupStmt *stmt)
 		Oid			*callbackArg;
 		int fd;
 
-		AllocResGroupEntry(groupid, &caps, ext_handle);
-
 		/* Argument of callback function should be allocated in heap region */
 		callbackArg = (Oid *)MemoryContextAlloc(TopMemoryContext, sizeof(Oid));
 		*callbackArg = groupid;
 		RegisterXactCallbackOnce(createResgroupCallback, (void *)callbackArg);
+
+		AllocResGroupEntry(groupid, &caps, ext_handle);
 
 		/* Create os dependent part for this resource group */
 		ResGroupOps_CreateGroup(groupid);
@@ -1253,18 +1254,22 @@ static void *
 ResGroupLoadExtension(int extension)
 {
 	void *ext_handle;
+	char ext_file_name[64];
+	char *load_error;
 
 	if (extension == RESGROUP_DEFAULT_EXTENSION)
 		return NULL;
 
-	//ext_handle = dlopen
-	ext_handle = NULL;
+	snprintf(ext_file_name, sizeof(ext_file_name), "%s.so", ResGroupExtension[extension]);
+	ext_handle = pg_dlopen(ext_file_name);
 	if (!ext_handle)
+	{
+		load_error = (char *) pg_dlerror();
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("extension %s cannot be loaded",
-					 ResGroupExtension[extension])));
-
+				(errcode_for_file_access(),
+				 errmsg("could not load library \"%s\": %s",
+						ext_file_name, load_error)));
+	}
 
 	return ext_handle;
 }
