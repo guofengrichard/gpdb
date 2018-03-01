@@ -95,7 +95,6 @@ static void dropResgroupCallback(XactEvent event, void *arg);
 static void alterResgroupCallback(XactEvent event, void *arg);
 
 static int ResGroupGetExtension(char *name);
-static void *ResGroupLoadExtension(int extension);
 
 /*
  * CREATE RESOURCE GROUP
@@ -428,6 +427,11 @@ AlterResourceGroup(AlterResourceGroupStmt *stmt)
 		 limitType == RESGROUP_LIMIT_TYPE_MEMORY) &&
 		oldValue < value)
 		validateCapabilities(pg_resgroupcapability_rel, groupid, &caps, false);
+
+	/*
+	 * TODO load extension according to caps->memExtension
+	 */
+	 ResGroupLoadExtension(caps.memExtension);
 
 	updateResgroupCapabilityEntry(pg_resgroupcapability_rel,
 								  groupid, limitType, value);
@@ -1250,7 +1254,7 @@ ResGroupGetExtension(char *name)
 	return -1;
 }
 
-static void *
+void *
 ResGroupLoadExtension(int extension)
 {
 	void *ext_handle;

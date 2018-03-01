@@ -32,4 +32,5 @@ extern Oid GetResGroupIdForRole(Oid roleid);
 extern void GetResGroupCapabilities(Relation rel,
 									Oid groupId,
 									ResGroupCaps *resgroupCaps);
+extern void *ResGroupLoadExtension(int extension);
 #endif   /* RESGROUPCMDS_H */
