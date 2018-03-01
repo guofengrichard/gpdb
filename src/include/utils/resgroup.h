@@ -18,6 +18,7 @@
 
 #include "cdb/memquota.h"
 #include "catalog/pg_resgroup.h"
+#include "utils/timestamp.h"
 
 /*
  * The max number of resource groups.
@@ -28,6 +29,8 @@
  * Resource group capability.
  */
 typedef int32 ResGroupCap;
+
+typedef struct ResGroupData				ResGroupData;
 
 /*
  * Resource group capabilities.
@@ -56,6 +59,52 @@ typedef struct ResGroupCaps
 	ResGroupCap		memSpillRatio;
 	ResGroupCap		memExtension;
 } ResGroupCaps;
+
+/*
+ *
+ */
+typedef struct ResGroupOperations
+{
+	void (*group_check_for_drop) (Oid groupId, char *name);
+	void (*group_alter_mem) (Oid groupId, ResGroupData *group);
+	void (*group_release_mem) (Oid groupId, ResGroupData *group);
+} ResGroupOperations;
+
+/*
+ * Resource group information.
+ */
+struct ResGroupData
+{
+	Oid			groupId;		/* Id for this group */
+	ResGroupCaps	caps;		/* capabilities of this group */
+	int			nRunning;		/* number of running trans */
+	PROC_QUEUE	waitProcs;		/* list of PGPROC objects waiting on this group */
+	int			totalExecuted;	/* total number of executed trans */
+	int			totalQueued;	/* total number of queued trans	*/
+	Interval	totalQueuedTime;/* total queue time */
+
+	bool		lockedForDrop;  /* true if resource group is dropped but not committed yet */
+
+	int32		memExpected;		/* expected memory chunks according to current caps */
+	int32		memQuotaGranted;	/* memory chunks for quota part */
+	int32		memSharedGranted;	/* memory chunks for shared part */
+
+	int32		memQuotaUsed;		/* memory chunks assigned to all the running slots */
+
+	/*
+	 * memory usage of this group, should always equal to the
+	 * sum of session memory(session_state->sessionVmem) that
+	 * belongs to this group
+	 */
+	int32		memUsage;
+	int32		memSharedUsage;
+
+	/*
+	 * operation functions for resource group
+	 */
+	ResGroupOperations	group_ops;
+	void				*ext_handle;
+};
 
 /*
  * GUC variables.
