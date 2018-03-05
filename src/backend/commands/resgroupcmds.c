@@ -776,13 +776,13 @@ checkResgroupCapLimit(ResGroupLimitType type, int value)
 				break;
 
 			case RESGROUP_LIMIT_TYPE_MEMORY_AUDITOR:
-				if (value != RESGROUP_MEMORY_AUDITOR_NORMAL &&
-					value != RESGROUP_MEMORY_AUDITOR_EXTERNAL)
+				if (value != RESGROUP_MEMORY_AUDITOR_DEFAULT &&
+					value != RESGROUP_MEMORY_AUDITOR_CGROUP)
 					ereport(ERROR,
 							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 							errmsg("memory_auditor should be %d or %d",
-								   RESGROUP_MEMORY_AUDITOR_NORMAL,
-								   RESGROUP_MEMORY_AUDITOR_EXTERNAL)));
+								   RESGROUP_MEMORY_AUDITOR_DEFAULT,
+								   RESGROUP_MEMORY_AUDITOR_CGROUP)));
 				break;
 
 			default:
@@ -794,7 +794,7 @@ checkResgroupCapLimit(ResGroupLimitType type, int value)
 static void
 checkResgroupMemAuditor(ResGroupCaps *caps)
 {
-	if (caps->memAuditor == RESGROUP_MEMORY_AUDITOR_EXTERNAL &&
+	if (caps->memAuditor == RESGROUP_MEMORY_AUDITOR_CGROUP &&
 		caps->concurrency != 0)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -855,7 +855,7 @@ parseStmtOptions(CreateResourceGroupStmt *stmt, ResGroupCaps *caps)
 		caps->memSpillRatio = RESGROUP_DEFAULT_MEM_SPILL_RATIO;
 
 	if (!(mask & (1 << RESGROUP_LIMIT_TYPE_MEMORY_AUDITOR)))
-		caps->memAuditor = RESGROUP_MEMORY_AUDITOR_NORMAL;
+		caps->memAuditor = RESGROUP_MEMORY_AUDITOR_DEFAULT;
 
 	checkResgroupMemAuditor(caps);
 }
