@@ -169,6 +169,8 @@ struct ResGroupData
 
 	bool		lockedForDrop;  /* true if resource group is dropped but not committed yet */
 
+	int32       memGap;         /* (memory limit (before alter) - memory expected (after alter)) */
+
 	int32		memExpected;		/* expected memory chunks according to current caps */
 	int32		memQuotaGranted;	/* memory chunks for quota part */
 	int32		memSharedGranted;	/* memory chunks for shared part */
@@ -313,6 +315,9 @@ static void bindGroupOperation(ResGroupData *group);
 static void ResGroupCheckForDropDefault(ResGroupData *group, char *name);
 static void ResGroupAlterMemDefault(Oid groupId, ResGroupData *group);
 static void ResGroupReleaseMemDefault(Oid groupId, ResGroupData *group);
+static void ResGroupAlterMemCgroup(Oid groupId, ResGroupData *group);
+static void groupApplyCgroupMemInc(ResGroupData *group);
+static void groupApplyCgroupMemDec(ResGroupData *group);
 
 #ifdef USE_ASSERT_CHECKING
 static bool selfHasGroup(void);
@@ -653,7 +658,8 @@ ResGroupCreateOnAbort(Oid groupId)
 void
 ResGroupAlterOnCommit(Oid groupId,
 					  ResGroupLimitType limittype,
-					  const ResGroupCaps *caps)
+					  const ResGroupCaps *caps,
+					  int32 memGap)
 {
 	ResGroupData	*group;
 	volatile int	savedInterruptHoldoffCount;
@@ -675,6 +681,9 @@ ResGroupAlterOnCommit(Oid groupId,
 		}
 		else if (limittype != RESGROUP_LIMIT_TYPE_MEMORY_SPILL_RATIO)
 		{
+			Assert(pResGroupControl->totalChunks > 0);
+			group->memGap += pResGroupControl->totalChunks * memGap / 100;
+
 			if (group->group_ops.group_alter_mem)
 				group->group_ops.group_alter_mem(groupId, group);
 		}
@@ -1010,6 +1019,7 @@ createGroup(Oid groupId, const ResGroupCaps *caps)
 	ProcQueueInit(&group->waitProcs);
 	group->totalExecuted = 0;
 	group->totalQueued = 0;
+	group->memGap = 0;
 	group->memUsage = 0;
 	group->memSharedUsage = 0;
 	group->memQuotaUsed = 0;
@@ -1042,6 +1052,13 @@ bindGroupOperation(ResGroupData *group)
 	}
 	else if (group->caps.memAuditor == RESGROUP_MEMORY_AUDITOR_CGROUP)
 	{
+		group->group_ops.group_alter_mem = ResGroupAlterMemCgroup;
+	}
+	else
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid memory auditor: %d", group->caps.memAuditor)));
 	}
 }
 
@@ -1754,8 +1771,8 @@ wakeupGroups(Oid skipGroupId)
 {
 	int				i;
 
-	if (Gp_role != GP_ROLE_DISPATCH)
-		return;
+//	if (Gp_role != GP_ROLE_DISPATCH)
+//		return;
 
 	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
 
@@ -1773,14 +1790,25 @@ wakeupGroups(Oid skipGroupId)
 		if (group->lockedForDrop)
 			continue;
 
-		if (groupWaitQueueIsEmpty(group))
-			continue;
+		if (group->caps.memAuditor == RESGROUP_MEMORY_AUDITOR_CGROUP)
+		{
+			if (group->memGap < 0)
+				groupApplyCgroupMemInc(group);
+		}
+		else
+		{
+			if (Gp_role != GP_ROLE_DISPATCH)
+				continue;
 
-		delta = group->memExpected - group->memQuotaGranted - group->memSharedGranted;
-		if (delta <= 0)
-			continue;
+			if (groupWaitQueueIsEmpty(group))
+				continue;
 
-		wakeupSlots(group, true);
+			delta = group->memExpected - group->memQuotaGranted - group->memSharedGranted;
+			if (delta <= 0)
+				continue;
+
+			wakeupSlots(group, true);
+		}
 
 		if (!pResGroupControl->freeChunks)
 			break;
@@ -2126,6 +2154,8 @@ UnassignResGroup(void)
 	}
 	else if (slot->nProcs == 0)
 	{
+		int32 released;
+
 		Assert(Gp_role == GP_ROLE_EXECUTE);
 
 		group->memQuotaUsed -= slot->memQuota;
@@ -2140,7 +2170,10 @@ UnassignResGroup(void)
 		group->nRunning--;
 
 		/* And finally release the overused memory quota */
-		mempoolAutoRelease(group);
+		released = mempoolAutoRelease(group);
+		if (released > 0)
+			wakeupGroups(group->groupId);
+
 	}
 
 	LWLockRelease(ResGroupLock);
@@ -3207,4 +3240,71 @@ ResGroupReleaseMemDefault(Oid groupId, ResGroupData *group)
 	mempoolRelease(groupId, group->memQuotaGranted + group->memSharedGranted);
 	group->memQuotaGranted = 0;
 	group->memSharedGranted = 0;
+}
+
+static void
+ResGroupAlterMemCgroup(Oid groupId, ResGroupData *group)
+{
+	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
+
+	if (group->memGap == 0)
+		return;
+
+	if (group->memGap > 0) // Decrease
+	{
+		groupApplyCgroupMemDec(group);
+	}
+	else
+	{
+		groupApplyCgroupMemInc(group);
+	}
+}
+
+static void
+groupApplyCgroupMemInc(ResGroupData *group)
+{
+	int32 memory_limit;
+	int32 memory_inc;
+	int fd;
+
+	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
+	Assert(group->memGap < 0);
+
+	memory_inc = mempoolReserve(group->groupId, group->memGap * -1);
+
+	if (memory_inc <= 0)
+		return;
+
+	fd = ResGroupOps_LockGroup(group->groupId, "memory", true);
+	memory_limit = ResGroupOps_GetMemoryLimit(group->groupId);
+	ResGroupOps_SetMemoryLimitByValue(group->groupId, memory_limit + memory_inc);
+	ResGroupOps_UnLockGroup(group->groupId, fd);
+
+	group->memGap += memory_inc;
+}
+
+static void
+groupApplyCgroupMemDec(ResGroupData *group)
+{
+	int32 memory_limit;
+	int32 memory_dec;
+	int fd;
+
+	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
+	Assert(group->memGap > 0);
+
+	fd = ResGroupOps_LockGroup(group->groupId, "memory", true);
+	memory_limit = ResGroupOps_GetMemoryLimit(group->groupId);
+	Assert(memory_limit > group->memGap);
+
+//	memory_dec = Min(memory_limit, group->memGap);
+	memory_dec = group->memGap;
+
+	ResGroupOps_SetMemoryLimitByValue(group->groupId, memory_limit - memory_dec);
+	ResGroupOps_UnLockGroup(group->groupId, fd);
+
+	mempoolRelease(group->groupId, memory_dec);
+	wakeupGroups(group->groupId);
+
+	group->memGap -= memory_dec;
 }

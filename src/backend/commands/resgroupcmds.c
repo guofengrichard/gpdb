@@ -64,6 +64,8 @@ typedef struct {
 	Oid		groupid;
 	int		limittype;
 	ResGroupCaps	caps;
+
+	int32	memGap;
 } ResourceGroupAlterCallbackContext;
 
 static int str2Int(const char *str, const char *prop);
@@ -439,6 +441,7 @@ AlterResourceGroup(AlterResourceGroupStmt *stmt)
 		callbackCtx->groupid = groupid;
 		callbackCtx->limittype = limitType;
 		callbackCtx->caps = caps;
+		callbackCtx->memGap = oldValue - value;
 		RegisterXactCallbackOnce(alterResgroupCallback, (void *)callbackCtx);
 	}
 }
@@ -910,7 +913,7 @@ alterResgroupCallback(XactEvent event, void *arg)
 		(ResourceGroupAlterCallbackContext *) arg;
 
 	if (event == XACT_EVENT_COMMIT)
-		ResGroupAlterOnCommit(ctx->groupid, ctx->limittype, &ctx->caps);
+		ResGroupAlterOnCommit(ctx->groupid, ctx->limittype, &ctx->caps, ctx->memGap);
 
 	pfree(arg);
 }
