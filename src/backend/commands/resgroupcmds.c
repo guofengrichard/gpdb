@@ -71,6 +71,7 @@ static ResGroupLimitType getResgroupOptionType(const char* defname);
 static ResGroupCap getResgroupOptionValue(DefElem *defel);
 static const char *getResgroupOptionName(ResGroupLimitType type);
 static void checkResgroupCapLimit(ResGroupLimitType type, ResGroupCap value);
+static void checkResgroupMemAuditor(ResGroupCaps *caps);
 static void parseStmtOptions(CreateResourceGroupStmt *stmt, ResGroupCaps *caps);
 static void validateCapabilities(Relation rel, Oid groupid, ResGroupCaps *caps, bool newGroup);
 static void insertResgroupCapabilityEntry(Relation rel, Oid groupid, uint16 type, char *value);
@@ -401,6 +402,8 @@ AlterResourceGroup(AlterResourceGroupStmt *stmt)
 	oldValue = capArray[limitType];
 	capArray[limitType] = value;
 
+	checkResgroupMemAuditor(&caps);
+
 	if ((limitType == RESGROUP_LIMIT_TYPE_CPU ||
 		 limitType == RESGROUP_LIMIT_TYPE_MEMORY) &&
 		oldValue < value)
@@ -668,6 +671,8 @@ getResgroupOptionType(const char* defname)
 		return RESGROUP_LIMIT_TYPE_MEMORY_SHARED_QUOTA;
 	else if (strcmp(defname, "memory_spill_ratio") == 0)
 		return RESGROUP_LIMIT_TYPE_MEMORY_SPILL_RATIO;
+	else if (strcmp(defname, "memory_auditor") == 0)
+		return RESGROUP_LIMIT_TYPE_MEMORY_AUDITOR;
 	else
 		return RESGROUP_LIMIT_TYPE_UNKNOWN;
 }
@@ -770,10 +775,30 @@ checkResgroupCapLimit(ResGroupLimitType type, int value)
 								   RESGROUP_MAX_MEMORY_SPILL_RATIO)));
 				break;
 
+			case RESGROUP_LIMIT_TYPE_MEMORY_AUDITOR:
+				if (value != RESGROUP_MEMORY_AUDITOR_NORMAL &&
+					value != RESGROUP_MEMORY_AUDITOR_EXTERNAL)
+					ereport(ERROR,
+							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+							errmsg("memory_auditor should be %d or %d",
+								   RESGROUP_MEMORY_AUDITOR_NORMAL,
+								   RESGROUP_MEMORY_AUDITOR_EXTERNAL)));
+				break;
+
 			default:
 				Assert(!"unexpected options");
 				break;
 		}
+}
+
+static void
+checkResgroupMemAuditor(ResGroupCaps *caps)
+{
+	if (caps->memAuditor == RESGROUP_MEMORY_AUDITOR_EXTERNAL &&
+		caps->concurrency != 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("concurrency should be 0 for external resource group")));
 }
 
 /*
@@ -828,6 +853,11 @@ parseStmtOptions(CreateResourceGroupStmt *stmt, ResGroupCaps *caps)
 
 	if (!(mask & (1 << RESGROUP_LIMIT_TYPE_MEMORY_SPILL_RATIO)))
 		caps->memSpillRatio = RESGROUP_DEFAULT_MEM_SPILL_RATIO;
+
+	if (!(mask & (1 << RESGROUP_LIMIT_TYPE_MEMORY_AUDITOR)))
+		caps->memAuditor = RESGROUP_MEMORY_AUDITOR_NORMAL;
+
+	checkResgroupMemAuditor(caps);
 }
 
 /*
@@ -923,6 +953,10 @@ insertResgroupCapabilities(Relation rel, Oid groupId, ResGroupCaps *caps)
 	sprintf(value, "%d", caps->memSpillRatio);
 	insertResgroupCapabilityEntry(rel, groupId,
 								  RESGROUP_LIMIT_TYPE_MEMORY_SPILL_RATIO, value);
+
+	sprintf(value, "%d", caps->memAuditor);
+	insertResgroupCapabilityEntry(rel, groupId,
+								  RESGROUP_LIMIT_TYPE_MEMORY_AUDITOR, value);
 }
 
 /*
