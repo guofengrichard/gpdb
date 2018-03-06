@@ -189,7 +189,7 @@ struct ResGroupData
 	/*
 	 * operation functions for resource group
 	 */
-	ResGroupOperations group_ops;
+	const ResGroupOperations *group_op;
 };
 
 struct ResGroupControl
@@ -331,6 +331,20 @@ static bool slotIsInUse(const ResGroupSlotData *slot);
 static bool groupIsNotDropped(const ResGroupData *group);
 static bool groupWaitQueueFind(ResGroupData *group, const PGPROC *proc);
 #endif /* USE_ASSERT_CHECKING */
+
+static const ResGroupOperations resgroup_default_operations = {
+	.group_check_for_drop = ResGroupCheckForDropDefault,
+	.group_drop_finish = ResGroupDropFinishDefault,
+	.group_alter_mem = ResGroupAlterMemDefault,
+	.group_release_mem = ResGroupReleaseMemDefault,
+};
+
+static const ResGroupOperations resgroup_cgroup_operations = {
+	.group_check_for_drop = NULL,
+	.group_drop_finish = NULL,
+	.group_alter_mem = ResGroupAlterMemCgroup,
+	.group_release_mem = ResGroupReleaseMemCgroup,
+};
 
 /*
  * Estimate size the resource group structures will need in
@@ -561,8 +575,9 @@ ResGroupCheckForDrop(Oid groupId, char *name)
 
 	group = groupHashFind(groupId, true);
 
-	if (group->group_ops.group_check_for_drop)
-		group->group_ops.group_check_for_drop(group, name);
+	Assert(group->group_op != NULL);
+	if (group->group_op->group_check_for_drop)
+		group->group_op->group_check_for_drop(group, name);
 
 	LWLockRelease(ResGroupLock);
 }
@@ -592,8 +607,9 @@ ResGroupDropFinish(Oid groupId, bool isCommit)
 		{
 			group = groupHashFind(groupId, true);
 
-			if (group->group_ops.group_drop_finish)
-				group->group_ops.group_drop_finish(group);
+			Assert(group->group_op != NULL);
+			if (group->group_op->group_drop_finish)
+				group->group_op->group_drop_finish(group);
 		}
 
 		if (isCommit)
@@ -688,8 +704,9 @@ ResGroupAlterOnCommit(Oid groupId,
 			Assert(pResGroupControl->totalChunks > 0);
 			group->memGap += pResGroupControl->totalChunks * memGap / 100;
 
-			if (group->group_ops.group_alter_mem)
-				group->group_ops.group_alter_mem(groupId, group);
+			Assert(group->group_op != NULL);
+			if (group->group_op->group_alter_mem)
+				group->group_op->group_alter_mem(groupId, group);
 		}
 	}
 	PG_CATCH();
@@ -991,8 +1008,9 @@ removeGroup(Oid groupId)
 
 	group = groupHashRemove(groupId);
 
-	if (group->group_ops.group_release_mem)
-		group->group_ops.group_release_mem(groupId, group);
+	Assert(group->group_op != NULL);
+	if (group->group_op->group_release_mem)
+		group->group_op->group_release_mem(groupId, group);
 
 	group->groupId = InvalidOid;
 	wakeupGroups(groupId);
@@ -1027,8 +1045,8 @@ createGroup(Oid groupId, const ResGroupCaps *caps)
 	group->memUsage = 0;
 	group->memSharedUsage = 0;
 	group->memQuotaUsed = 0;
+	group->group_op = NULL;
 	memset(&group->totalQueuedTime, 0, sizeof(group->totalQueuedTime));
-	memset(&group->group_ops, 0, sizeof(group->group_ops));
 	group->lockedForDrop = false;
 
 	group->memQuotaGranted = 0;
@@ -1049,26 +1067,13 @@ bindGroupOperation(ResGroupData *group)
 	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
 
 	if (group->caps.memAuditor == RESGROUP_MEMORY_AUDITOR_DEFAULT)
-	{
-		group->group_ops.group_check_for_drop = ResGroupCheckForDropDefault;
-		group->group_ops.group_drop_finish = ResGroupDropFinishDefault;
-		group->group_ops.group_alter_mem = ResGroupAlterMemDefault;
-		group->group_ops.group_release_mem = ResGroupReleaseMemDefault;
-	}
+		group->group_op = &resgroup_default_operations;
 	else if (group->caps.memAuditor == RESGROUP_MEMORY_AUDITOR_CGROUP)
-	{
-		/*
-		 * No operation for group_check_for_drop and group_drop_finish
-		 */
-		group->group_ops.group_alter_mem = ResGroupAlterMemCgroup;
-		group->group_ops.group_release_mem = ResGroupReleaseMemCgroup;
-	}
+		group->group_op = &resgroup_cgroup_operations;
 	else
-	{
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("invalid memory auditor: %d", group->caps.memAuditor)));
-	}
 }
 
 /*
