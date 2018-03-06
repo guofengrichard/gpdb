@@ -316,6 +316,7 @@ static void ResGroupCheckForDropDefault(ResGroupData *group, char *name);
 static void ResGroupAlterMemDefault(Oid groupId, ResGroupData *group);
 static void ResGroupReleaseMemDefault(Oid groupId, ResGroupData *group);
 static void ResGroupAlterMemCgroup(Oid groupId, ResGroupData *group);
+static void ResGroupReleaseMemCgroup(Oid groupId, ResGroupData *group);
 static void groupApplyCgroupMemInc(ResGroupData *group);
 static void groupApplyCgroupMemDec(ResGroupData *group);
 
@@ -1053,6 +1054,7 @@ bindGroupOperation(ResGroupData *group)
 	else if (group->caps.memAuditor == RESGROUP_MEMORY_AUDITOR_CGROUP)
 	{
 		group->group_ops.group_alter_mem = ResGroupAlterMemCgroup;
+		group->group_ops.group_release_mem = ResGroupReleaseMemCgroup;
 	}
 	else
 	{
@@ -3307,4 +3309,16 @@ groupApplyCgroupMemDec(ResGroupData *group)
 	wakeupGroups(group->groupId);
 
 	group->memGap -= memory_dec;
+}
+
+static void
+ResGroupReleaseMemCgroup(Oid groupId, ResGroupData *group)
+{
+	int32 memory_expected;
+
+	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
+
+	memory_expected = groupGetMemExpected(&group->caps);
+
+	mempoolRelease(groupId, memory_expected + group->memGap);
 }
