@@ -150,6 +150,7 @@ struct ResGroupSlotData
 typedef struct ResGroupOperations
 {
 	void (*group_check_for_drop) (ResGroupData *group, char *name);
+	void (*group_drop_finish) (ResGroupData *group);
 	void (*group_alter_mem) (Oid groupId, ResGroupData *group);
 	void (*group_release_mem) (Oid groupId, ResGroupData *group);
 } ResGroupOperations;
@@ -315,6 +316,7 @@ static void bindGroupOperation(ResGroupData *group);
 static void ResGroupCheckForDropDefault(ResGroupData *group, char *name);
 static void ResGroupAlterMemDefault(Oid groupId, ResGroupData *group);
 static void ResGroupReleaseMemDefault(Oid groupId, ResGroupData *group);
+static void ResGroupDropFinishDefault(ResGroupData *group);
 static void ResGroupAlterMemCgroup(Oid groupId, ResGroupData *group);
 static void ResGroupReleaseMemCgroup(Oid groupId, ResGroupData *group);
 static void groupApplyCgroupMemInc(ResGroupData *group);
@@ -589,8 +591,9 @@ ResGroupDropFinish(Oid groupId, bool isCommit)
 		if (Gp_role == GP_ROLE_DISPATCH)
 		{
 			group = groupHashFind(groupId, true);
-			wakeupSlots(group, false);
-			unlockResGroupForDrop(group);
+
+			if (group->group_ops.group_drop_finish)
+				group->group_ops.group_drop_finish(group);
 		}
 
 		if (isCommit)
@@ -1048,11 +1051,15 @@ bindGroupOperation(ResGroupData *group)
 	if (group->caps.memAuditor == RESGROUP_MEMORY_AUDITOR_DEFAULT)
 	{
 		group->group_ops.group_check_for_drop = ResGroupCheckForDropDefault;
+		group->group_ops.group_drop_finish = ResGroupDropFinishDefault;
 		group->group_ops.group_alter_mem = ResGroupAlterMemDefault;
 		group->group_ops.group_release_mem = ResGroupReleaseMemDefault;
 	}
 	else if (group->caps.memAuditor == RESGROUP_MEMORY_AUDITOR_CGROUP)
 	{
+		/*
+		 * No operation for group_check_for_drop and group_drop_finish
+		 */
 		group->group_ops.group_alter_mem = ResGroupAlterMemCgroup;
 		group->group_ops.group_release_mem = ResGroupReleaseMemCgroup;
 	}
@@ -3242,6 +3249,15 @@ ResGroupReleaseMemDefault(Oid groupId, ResGroupData *group)
 	mempoolRelease(groupId, group->memQuotaGranted + group->memSharedGranted);
 	group->memQuotaGranted = 0;
 	group->memSharedGranted = 0;
+}
+
+static void
+ResGroupDropFinishDefault(ResGroupData *group)
+{
+	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
+
+	wakeupSlots(group, false);
+	unlockResGroupForDrop(group);
 }
 
 static void
