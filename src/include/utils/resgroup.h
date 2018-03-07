@@ -54,6 +54,7 @@ typedef struct ResGroupCaps
 	ResGroupCap		memLimit;
 	ResGroupCap		memSharedQuota;
 	ResGroupCap		memSpillRatio;
+	ResGroupCap		memAuditor;
 } ResGroupCaps;
 
 /*
