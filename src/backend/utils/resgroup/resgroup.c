@@ -158,6 +158,7 @@ typedef struct ResGroupOperations
 	void (*group_drop_finish) (ResGroupData *group);
 	void (*group_alter_mem) (Oid groupId, ResGroupData *group);
 	void (*group_release_mem) (Oid groupId, ResGroupData *group);
+	void (*group_wakeup) (ResGroupData *group);
 } ResGroupOperations;
 
 /*
@@ -174,6 +175,15 @@ struct ResGroupData
 	Interval	totalQueuedTime;/* total queue time */
 
 	bool		lockedForDrop;  /* true if resource group is dropped but not committed yet */
+
+	/*
+	 * memGap is calculated as:
+	 * 	(memory limit (before alter) - memory expected (after alter))
+	 *
+	 * It stands for how many memory (in chunks) this group should
+	 * give back to MEM POOL.
+	 */
+	int32       memGap;
 
 	int32		memExpected;		/* expected memory chunks according to current caps */
 	int32		memQuotaGranted;	/* memory chunks for quota part */
@@ -320,6 +330,12 @@ static void ResGroupCheckForDropDefault(ResGroupData *group, char *name);
 static void ResGroupAlterMemDefault(Oid groupId, ResGroupData *group);
 static void ResGroupReleaseMemDefault(Oid groupId, ResGroupData *group);
 static void ResGroupDropFinishDefault(ResGroupData *group);
+static void ResGroupWakeupDefault(ResGroupData *group);
+static void ResGroupAlterMemCgroup(Oid groupId, ResGroupData *group);
+static void ResGroupReleaseMemCgroup(Oid groupId, ResGroupData *group);
+static void groupApplyCgroupMemInc(ResGroupData *group);
+static void groupApplyCgroupMemDec(ResGroupData *group);
+static void ResGroupWakeupCgroup(ResGroupData *group);
 
 #ifdef USE_ASSERT_CHECKING
 static bool selfHasGroup(void);
@@ -339,6 +355,7 @@ static const ResGroupOperations resgroup_default_operations = {
 	.group_drop_finish = ResGroupDropFinishDefault,
 	.group_alter_mem = ResGroupAlterMemDefault,
 	.group_release_mem = ResGroupReleaseMemDefault,
+	.group_wakeup = ResGroupWakeupDefault,
 };
 
 /*
@@ -347,8 +364,9 @@ static const ResGroupOperations resgroup_default_operations = {
 static const ResGroupOperations resgroup_cgroup_operations = {
 	.group_check_for_drop = NULL,
 	.group_drop_finish = NULL,
-	.group_alter_mem = NULL,
-	.group_release_mem = NULL,
+	.group_alter_mem = ResGroupAlterMemCgroup,
+	.group_release_mem = ResGroupReleaseMemCgroup,
+	.group_wakeup = ResGroupWakeupCgroup,
 };
 
 /*
@@ -682,10 +700,10 @@ ResGroupCreateOnAbort(Oid groupId)
 void
 ResGroupAlterOnCommit(Oid groupId,
 					  ResGroupLimitType limittype,
-					  const ResGroupCaps *caps)
+					  const ResGroupCaps *caps,
+					  ResGroupCap memLimitGap)
 {
 	ResGroupData	*group;
-	bool			shouldWakeUp;
 	volatile int	savedInterruptHoldoffCount;
 
 	Assert(caps != NULL);
@@ -705,6 +723,8 @@ ResGroupAlterOnCommit(Oid groupId,
 		}
 		else if (limittype != RESGROUP_LIMIT_TYPE_MEMORY_SPILL_RATIO)
 		{
+			Assert(pResGroupControl->totalChunks > 0);
+			group->memGap += pResGroupControl->totalChunks * memLimitGap / 100;
 
 			Assert(group->group_op != NULL);
 			if (group->group_op->group_alter_mem)
@@ -1050,6 +1070,7 @@ createGroup(Oid groupId, const ResGroupCaps *caps)
 	ProcQueueInit(&group->waitProcs);
 	group->totalExecuted = 0;
 	group->totalQueued = 0;
+	group->memGap = 0;
 	group->memUsage = 0;
 	group->memSharedUsage = 0;
 	group->memQuotaUsed = 0;
@@ -1788,23 +1809,22 @@ wakeupSlots(ResGroupData *group, bool grant)
 }
 
 /*
- * When a group returns chunks to MEM POOL, we need to wake up
- * the transactions waiting on other groups for memory quota.
+ * When a group returns chunks to MEM POOL, we need to:
+ * 1. For groups with default memory auditor, wake up the
+ *    transactions waiting on them for memory quota.
+ * 2. For groups with cgroup memory auditor, increase their
+ *    memory limit if needed.
  */
 static void
 wakeupGroups(Oid skipGroupId)
 {
 	int				i;
 
-	if (Gp_role != GP_ROLE_DISPATCH)
-		return;
-
 	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
 
 	for (i = 0; i < MaxResourceGroups; i++)
 	{
 		ResGroupData	*group = &pResGroupControl->groups[i];
-		int32			delta;
 
 		if (group->groupId == InvalidOid)
 			continue;
@@ -1812,17 +1832,9 @@ wakeupGroups(Oid skipGroupId)
 		if (group->groupId == skipGroupId)
 			continue;
 
-		if (group->lockedForDrop)
-			continue;
-
-		if (groupWaitQueueIsEmpty(group))
-			continue;
-
-		delta = group->memExpected - group->memQuotaGranted - group->memSharedGranted;
-		if (delta <= 0)
-			continue;
-
-		wakeupSlots(group, true);
+		Assert(group->group_op != NULL);
+		if (group->group_op->group_wakeup)
+			group->group_op->group_wakeup(group);
 
 		if (!pResGroupControl->freeChunks)
 			break;
@@ -2168,6 +2180,8 @@ UnassignResGroup(void)
 	}
 	else if (slot->nProcs == 0)
 	{
+		int32 released;
+
 		Assert(Gp_role == GP_ROLE_EXECUTE);
 
 		group->memQuotaUsed -= slot->memQuota;
@@ -2182,7 +2196,10 @@ UnassignResGroup(void)
 		group->nRunning--;
 
 		/* And finally release the overused memory quota */
-		mempoolAutoRelease(group);
+		released = mempoolAutoRelease(group);
+		if (released > 0)
+			wakeupGroups(group->groupId);
+
 	}
 
 	LWLockRelease(ResGroupLock);
@@ -3267,4 +3284,136 @@ ResGroupDropFinishDefault(ResGroupData *group)
 
 	wakeupSlots(group, false);
 	unlockResGroupForDrop(group);
+}
+
+/*
+ * Operation for resource group with default memory auditor
+ * when wakeup resource group.
+ */
+static void
+ResGroupWakeupDefault(ResGroupData *group)
+{
+	int32			delta;
+
+	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
+
+	if (Gp_role != GP_ROLE_DISPATCH)
+		return;
+
+	if (group->lockedForDrop)
+		return;
+
+	if (groupWaitQueueIsEmpty(group))
+		return;
+
+	delta = group->memExpected - group->memQuotaGranted - group->memSharedGranted;
+	if (delta <= 0)
+		return;
+
+	wakeupSlots(group, true);
+}
+
+/*
+ * Operation for resource group with cgroup memory auditor
+ * when alter its memory limit.
+ */
+static void
+ResGroupAlterMemCgroup(Oid groupId, ResGroupData *group)
+{
+	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
+
+	if (group->memGap == 0)
+		return;
+
+	if (group->memGap > 0)	// Decrease
+		groupApplyCgroupMemDec(group);
+	else					// Increase
+		groupApplyCgroupMemInc(group);
+}
+
+/*
+ * Increase a resource group's cgroup memory limit
+ *
+ * This may not take effect immediately.
+ */
+static void
+groupApplyCgroupMemInc(ResGroupData *group)
+{
+	int32 memory_limit;
+	int32 memory_inc;
+	int fd;
+
+	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
+	Assert(group->memGap < 0);
+
+	memory_inc = mempoolReserve(group->groupId, group->memGap * -1);
+
+	if (memory_inc <= 0)
+		return;
+
+	fd = ResGroupOps_LockGroup(group->groupId, "memory", true);
+	memory_limit = ResGroupOps_GetMemoryLimit(group->groupId);
+	ResGroupOps_SetMemoryLimitByValue(group->groupId, memory_limit + memory_inc);
+	ResGroupOps_UnLockGroup(group->groupId, fd);
+
+	group->memGap += memory_inc;
+}
+
+/*
+ * Decrease a resource group's cgroup memory limit
+ *
+ * This will take effect immediately for now.
+ */
+static void
+groupApplyCgroupMemDec(ResGroupData *group)
+{
+	int32 memory_limit;
+	int32 memory_dec;
+	int fd;
+
+	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
+	Assert(group->memGap > 0);
+
+	fd = ResGroupOps_LockGroup(group->groupId, "memory", true);
+	memory_limit = ResGroupOps_GetMemoryLimit(group->groupId);
+	Assert(memory_limit > group->memGap);
+
+	memory_dec = group->memGap;
+
+	ResGroupOps_SetMemoryLimitByValue(group->groupId, memory_limit - memory_dec);
+	ResGroupOps_UnLockGroup(group->groupId, fd);
+
+	mempoolRelease(group->groupId, memory_dec);
+	wakeupGroups(group->groupId);
+
+	group->memGap -= memory_dec;
+}
+
+/*
+ * Operation for resource group with cgroup memory auditor
+ * when reclaiming its memory back to MEM POOL.
+ */
+static void
+ResGroupReleaseMemCgroup(Oid groupId, ResGroupData *group)
+{
+	int32 memory_expected;
+
+	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
+
+	memory_expected = groupGetMemExpected(&group->caps);
+
+	mempoolRelease(groupId, memory_expected + group->memGap);
+}
+
+/*
+ * Operation for resource group with cgroup memory auditor
+ * when wakeup resource group.
+ */
+static void
+ResGroupWakeupCgroup(ResGroupData *group)
+{
+	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
+
+	if (group->memGap < 0)
+		groupApplyCgroupMemInc(group);
 }

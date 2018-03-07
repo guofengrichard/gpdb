@@ -54,7 +54,7 @@ static char * buildPath(Oid group, const char *base, const char *comp, const cha
 static int lockDir(const char *path, bool block);
 static void unassignGroup(Oid group, const char *comp, int fddir);
 static bool createDir(Oid group, const char *comp);
-static bool removeDir(Oid group, const char *comp, bool unassign);
+static bool removeDir(Oid group, const char *comp, const char *prop, bool unassign);
 static int getCpuCores(void);
 static size_t readData(const char *path, char *data, size_t datasize);
 static void writeData(const char *path, char *data, size_t datasize);
@@ -317,7 +317,7 @@ createDir(Oid group, const char *comp)
  * - if unassign is true then unassign all the processes first before removal;
  */
 static bool
-removeDir(Oid group, const char *comp, bool unassign)
+removeDir(Oid group, const char *comp, const char *prop, bool unassign)
 {
 	char path[MAXPGPATH];
 	size_t pathsize = sizeof(path);
@@ -335,6 +335,12 @@ removeDir(Oid group, const char *comp, bool unassign)
 		/* the dir is already removed */
 		return true;
 	}
+
+	/*
+	 * Reset the corresponding control file to zero
+	 */
+	if (prop)
+		writeInt64(group, NULL, comp, prop, 0);
 
 	if (unassign)
 		unassignGroup(group, comp, fddir);
@@ -731,9 +737,9 @@ ResGroupOps_CreateGroup(Oid group)
 void
 ResGroupOps_DestroyGroup(Oid group)
 {
-	if (!removeDir(group, "cpu", true)
-		|| !removeDir(group, "cpuacct", true)
-		|| !removeDir(group, "memory", true))
+	if (!removeDir(group, "cpu", "cpu.shares", true)
+		|| !removeDir(group, "cpuacct", NULL, true)
+		|| !removeDir(group, "memory", "memory.limit_in_bytes", true))
 	{
 		CGROUP_ERROR("can't remove cgroup for resgroup '%d': %s",
 			 group, strerror(errno));

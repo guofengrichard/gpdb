@@ -128,7 +128,8 @@ extern void ResGroupDropFinish(Oid groupId, bool isCommit);
 extern void ResGroupCreateOnAbort(Oid groupId);
 extern void ResGroupAlterOnCommit(Oid groupId,
 								  ResGroupLimitType limittype,
-								  const ResGroupCaps *caps);
+								  const ResGroupCaps *caps,
+								  ResGroupCap memLimitGap);
 extern void ResGroupCheckForDrop(Oid groupId, char *name);
 
 extern int32 ResGroupGetVmemLimitChunks(void);

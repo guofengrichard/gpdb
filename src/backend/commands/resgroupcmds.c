@@ -71,8 +71,9 @@ static const char *ResGroupMemAuditorName[] =
  */
 typedef struct {
 	Oid		groupid;
-	int		limittype;
+	ResGroupLimitType	limittype;
 	ResGroupCaps	caps;
+	ResGroupCap		memLimitGap;
 } ResourceGroupAlterCallbackContext;
 
 static int str2Int(const char *str, const char *prop);
@@ -445,6 +446,8 @@ AlterResourceGroup(AlterResourceGroupStmt *stmt)
 		callbackCtx->groupid = groupid;
 		callbackCtx->limittype = limitType;
 		callbackCtx->caps = caps;
+		callbackCtx->memLimitGap = (limitType == RESGROUP_LIMIT_TYPE_MEMORY) ?
+			(oldValue - value) : 0;
 		RegisterXactCallbackOnce(alterResgroupCallback, (void *)callbackCtx);
 	}
 }
@@ -934,7 +937,8 @@ alterResgroupCallback(XactEvent event, void *arg)
 		(ResourceGroupAlterCallbackContext *) arg;
 
 	if (event == XACT_EVENT_COMMIT)
-		ResGroupAlterOnCommit(ctx->groupid, ctx->limittype, &ctx->caps);
+		ResGroupAlterOnCommit(ctx->groupid, ctx->limittype, &ctx->caps,
+				ctx->memLimitGap);
 
 	pfree(arg);
 }
