@@ -19,8 +19,13 @@
 #include "utils/resgroup.h"
 #include "utils/relcache.h"
 
-#define RESGROUP_MEMORY_AUDITOR_DEFAULT		(0)
-#define RESGROUP_MEMORY_AUDITOR_CGROUP		(1)
+typedef enum ResGroupMemAuditorType
+{
+	RESGROUP_MEMORY_AUDITOR_DEFAULT = 0,
+	RESGROUP_MEMORY_AUDITOR_CGROUP,
+
+	RESGROUP_MEMORY_AUDITOR_COUNT,
+} ResGroupMemAuditorType;
 
 extern void CreateResourceGroup(CreateResourceGroupStmt *stmt);
 extern void DropResourceGroup(DropResourceGroupStmt *stmt);

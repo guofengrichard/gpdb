@@ -58,6 +58,15 @@
 #define RESGROUP_MAX_MEMORY_SPILL_RATIO		(100)
 
 /*
+ * The names must be in the same order as ResGroupMemAuditorType.
+ */
+static const char *ResGroupMemAuditorName[] =
+{
+	"default",	// RESGROUP_MEMORY_AUDITOR_DEFAULT
+	"cgroup"	// RESGROUP_MEMORY_AUDITOR_CGROUP
+};
+
+/*
  * The context to pass to callback in ALTER resource group
  */
 typedef struct {
@@ -70,7 +79,7 @@ typedef struct {
 
 static int str2Int(const char *str, const char *prop);
 static ResGroupLimitType getResgroupOptionType(const char* defname);
-static ResGroupCap getResgroupOptionValue(DefElem *defel);
+static ResGroupCap getResgroupOptionValue(DefElem *defel, int type);
 static const char *getResgroupOptionName(ResGroupLimitType type);
 static void checkResgroupCapLimit(ResGroupLimitType type, ResGroupCap value);
 static void checkResgroupMemAuditor(ResGroupCaps *caps);
@@ -87,6 +96,7 @@ static void checkAuthIdForDrop(Oid groupId);
 static void createResgroupCallback(XactEvent event, void *arg);
 static void dropResgroupCallback(XactEvent event, void *arg);
 static void alterResgroupCallback(XactEvent event, void *arg);
+static int getResGroupMemAuditor(char *name);
 
 /*
  * CREATE RESOURCE GROUP
@@ -365,7 +375,7 @@ AlterResourceGroup(AlterResourceGroupStmt *stmt)
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("option \"%s\" not recognized", defel->defname)));
 
-	value = getResgroupOptionValue(defel);
+	value = getResgroupOptionValue(defel, limitType);
 	checkResgroupCapLimit(limitType, value);
 
 	/*
@@ -684,9 +694,20 @@ getResgroupOptionType(const char* defname)
  * Get capability value from DefElem, convert from int64 to int
  */
 static ResGroupCap
-getResgroupOptionValue(DefElem *defel)
+getResgroupOptionValue(DefElem *defel, int type)
 {
-	int64 value = defGetInt64(defel);
+	int64 value;
+
+	if (type == RESGROUP_LIMIT_TYPE_MEMORY_AUDITOR)
+	{
+		char *auditor_name = defGetString(defel);
+		value = getResGroupMemAuditor(auditor_name);
+	}
+	else
+	{
+		value = defGetInt64(defel);
+	}
+
 	if (value < INT_MIN || value > INT_MAX)
 		ereport(ERROR,
 				(errcode(ERRCODE_SYNTAX_ERROR),
@@ -783,9 +804,9 @@ checkResgroupCapLimit(ResGroupLimitType type, int value)
 					value != RESGROUP_MEMORY_AUDITOR_CGROUP)
 					ereport(ERROR,
 							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-							errmsg("memory_auditor should be %d or %d",
-								   RESGROUP_MEMORY_AUDITOR_DEFAULT,
-								   RESGROUP_MEMORY_AUDITOR_CGROUP)));
+							errmsg("memory_auditor should be \"%s\" or \"%s\"",
+								   ResGroupMemAuditorName[RESGROUP_MEMORY_AUDITOR_DEFAULT],
+								   ResGroupMemAuditorName[RESGROUP_MEMORY_AUDITOR_CGROUP])));
 				break;
 
 			default:
@@ -801,7 +822,8 @@ checkResgroupMemAuditor(ResGroupCaps *caps)
 		caps->concurrency != 0)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("concurrency should be 0 for external resource group")));
+				errmsg("concurrency should be 0 for resource group with memory auditor %s",
+					ResGroupMemAuditorName[RESGROUP_MEMORY_AUDITOR_CGROUP])));
 }
 
 /*
@@ -836,7 +858,7 @@ parseStmtOptions(CreateResourceGroupStmt *stmt, ResGroupCaps *caps)
 		else
 			mask |= 1 << type;
 
-		value = getResgroupOptionValue(defel);
+		value = getResgroupOptionValue(defel, type);
 		checkResgroupCapLimit(type, value);
 
 		capArray[type] = value;
@@ -1221,4 +1243,18 @@ str2Int(const char *str, const char *prop)
 				errmsg("%s requires a numeric value", prop)));
 
 	return floor(val);
+}
+
+static int
+getResGroupMemAuditor(char *name)
+{
+	int index;
+
+	for (index = 0; index < RESGROUP_MEMORY_AUDITOR_COUNT; index ++)
+	{
+		if (strcmp(ResGroupMemAuditorName[index], name) == 0)
+			return index;
+	}
+
+	return -1;
 }
