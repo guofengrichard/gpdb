@@ -663,6 +663,29 @@ GetResGroupNameForId(Oid oid, LOCKMODE lockmode)
 }
 
 /*
+ * Check to see if the group can be assigned with role
+ */
+void
+ResGroupCheckForRole(Oid groupId)
+{
+	Relation pg_resgroupcapability_rel;
+	ResGroupCaps caps;
+
+	pg_resgroupcapability_rel = heap_open(ResGroupCapabilityRelationId,
+										  AccessShareLock);
+
+	/* Load current resource group capabilities */
+	GetResGroupCapabilities(pg_resgroupcapability_rel, groupId, &caps);
+	if (caps.memAuditor == RESGROUP_MEMORY_AUDITOR_CGROUP)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("You cannot assign a role to this resource group because "
+					    "the memory_auditor property for this group is not the default.")));
+
+	heap_close(pg_resgroupcapability_rel, AccessShareLock);
+}
+
+/*
  * Get the option type from a name string.
  *
  * @param defname  the name string

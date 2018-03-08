@@ -38,4 +38,6 @@ extern Oid GetResGroupIdForRole(Oid roleid);
 extern void GetResGroupCapabilities(Relation rel,
 									Oid groupId,
 									ResGroupCaps *resgroupCaps);
+extern void ResGroupCheckForRole(Oid groupId);
+
 #endif   /* RESGROUPCMDS_H */
