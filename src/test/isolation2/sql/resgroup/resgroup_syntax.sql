@@ -90,8 +90,8 @@ CREATE RESOURCE GROUP rg_test_group WITH (cpu_rate_limit=10, memory_limit=1.9);
 -- negative: concurrency should be in [1, max_connections]
 CREATE RESOURCE GROUP rg_test_group WITH (concurrency=-1, cpu_rate_limit=10, memory_limit=10);
 CREATE RESOURCE GROUP rg_test_group WITH (concurrency=26, cpu_rate_limit=10, memory_limit=10);
--- negative: memory_auditor should be 'default' or 'cgroup'
-CREATE RESOURCE GROUP rg_test_group WITH (concurrency=0, cpu_rate_limit=10, memory_limit=10, memory_auditor="randomtest");
+-- negative: memory_auditor should be 'vmtracker' or 'cgroup'
+CREATE RESOURCE GROUP rg_test_group WITH (concurrency=0, cpu_rate_limit=10, memory_limit=10, memory_auditor="randomtext");
 -- negative: concurrency should be zero for cgroup audited resource group
 CREATE RESOURCE GROUP rg_test_group WITH (concurrency=1, cpu_rate_limit=10, memory_limit=10, memory_auditor="cgroup");
 

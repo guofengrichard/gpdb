@@ -66,9 +66,11 @@ static void getMemoryInfo(unsigned long *ram, unsigned long *swap);
 static void getCgMemoryInfo(uint64 *cgram, uint64 *cgmemsw);
 static int getOvercommitRatio(void);
 static void detectCgroupMountPoint(void);
+static void detectCgroupMemSwap(void);
 
 static Oid currentGroupIdInCGroup = InvalidOid;
 static char cgdir[MAXPGPATH];
+static bool cgmemswap = false;
 
 /*
  * Build path string with parameters.
@@ -555,9 +557,13 @@ checkPermission(Oid group, bool report)
 
 	__CHECK("", R_OK | W_OK | X_OK);
 	__CHECK("memory.limit_in_bytes", R_OK | W_OK);
-	__CHECK("memory.memsw.limit_in_bytes", R_OK | W_OK);
 	__CHECK("memory.usage_in_bytes", R_OK);
-	__CHECK("memory.memsw.usage_in_bytes", R_OK);
+
+	if (cgmemswap)
+	{
+		__CHECK("memory.memsw.limit_in_bytes", R_OK | W_OK);
+		__CHECK("memory.memsw.usage_in_bytes", R_OK);
+	}
 
 #undef __CHECK
 
@@ -621,6 +627,24 @@ getOvercommitRatio(void)
 	return ratio;
 }
 
+/*
+ * detect if cgroup supports swap memory limit
+ */
+static void
+detectCgroupMemSwap(void)
+{
+	char path[MAXPGPATH];
+	size_t pathsize = sizeof(path);
+
+	buildPath(RESGROUP_ROOT_ID, "",
+			"memory", "memory.memsw.limit_in_bytes", path, pathsize);
+
+	if (access(path, F_OK))
+		cgmemswap = false;
+	else
+		cgmemswap = true;
+}
+
 /* detect cgroup mount point */
 static void
 detectCgroupMountPoint(void)
@@ -678,6 +702,7 @@ ResGroupOps_Bless(void)
 		return;
 
 	detectCgroupMountPoint();
+	detectCgroupMemSwap();
 	checkPermission(RESGROUP_ROOT_ID, true);
 
 	/*
@@ -876,34 +901,47 @@ ResGroupOps_SetMemoryLimit(Oid group, int memory_limit)
  * Set the memory limit for the OS group by value.
  *
  * memory_limit is the limit value in chunks
+ *
+ * If cgroup supports memory swap, we will write the same limit to
+ * memory.memsw.limit and memory.limit.
  */
 void
 ResGroupOps_SetMemoryLimitByValue(Oid group, int32 memory_limit)
 {
 	const char *comp = "memory";
 	int64 memory_limit_in_bytes;
-	int64 memory_limit_in_bytes_old;
-
-	memory_limit_in_bytes_old = readInt64(group, NULL, comp, "memory.limit_in_bytes");
 
 	memory_limit_in_bytes = VmemTracker_ConvertVmemChunksToBytes(memory_limit);
 
-	if (memory_limit_in_bytes == memory_limit_in_bytes_old)
-		return;
-
-	if (memory_limit_in_bytes > memory_limit_in_bytes_old)
+	if (cgmemswap == false)
 	{
-		writeInt64(group, NULL, comp, "memory.memsw.limit_in_bytes",
-				memory_limit_in_bytes);
 		writeInt64(group, NULL, comp, "memory.limit_in_bytes",
 				memory_limit_in_bytes);
 	}
 	else
 	{
-		writeInt64(group, NULL, comp, "memory.limit_in_bytes",
-				memory_limit_in_bytes);
-		writeInt64(group, NULL, comp, "memory.memsw.limit_in_bytes",
-				memory_limit_in_bytes);
+		int64 memory_limit_in_bytes_old;
+
+		memory_limit_in_bytes_old = readInt64(group, NULL,
+				comp, "memory.limit_in_bytes");
+
+		if (memory_limit_in_bytes == memory_limit_in_bytes_old)
+			return;
+
+		if (memory_limit_in_bytes > memory_limit_in_bytes_old)
+		{
+			writeInt64(group, NULL, comp, "memory.memsw.limit_in_bytes",
+					memory_limit_in_bytes);
+			writeInt64(group, NULL, comp, "memory.limit_in_bytes",
+					memory_limit_in_bytes);
+		}
+		else
+		{
+			writeInt64(group, NULL, comp, "memory.limit_in_bytes",
+					memory_limit_in_bytes);
+			writeInt64(group, NULL, comp, "memory.memsw.limit_in_bytes",
+					memory_limit_in_bytes);
+		}
 	}
 }
 
@@ -921,20 +959,27 @@ ResGroupOps_GetCpuUsage(Oid group)
 
 /*
  * Get the memory usage of the OS group
+ *
+ * memory usage is returned in chunks
  */
 int32
 ResGroupOps_GetMemoryUsage(Oid group)
 {
 	const char *comp = "memory";
 	int64 memory_usage_in_bytes;
+	char *prop;
 
-	memory_usage_in_bytes = readInt64(group, NULL, comp, "memory.usage_in_bytes");
+	prop = cgmemswap ? "memory.memsw.usage_in_bytes" : "memory.usage_in_bytes";
+
+	memory_usage_in_bytes = readInt64(group, NULL, comp, prop);
 
 	return VmemTracker_ConvertVmemBytesToChunks(memory_usage_in_bytes);
 }
 
 /*
  * Get the memory limit of the OS group
+ *
+ * memory limit is returned in chunks
  */
 int32
 ResGroupOps_GetMemoryLimit(Oid group)
@@ -942,7 +987,8 @@ ResGroupOps_GetMemoryLimit(Oid group)
 	const char *comp = "memory";
 	int64 memory_limit_in_bytes;
 
-	memory_limit_in_bytes = readInt64(group, NULL, comp, "memory.limit_in_bytes");
+	memory_limit_in_bytes = readInt64(group, NULL,
+			comp, "memory.limit_in_bytes");
 
 	return VmemTracker_ConvertVmemBytesToChunks(memory_limit_in_bytes);
 }

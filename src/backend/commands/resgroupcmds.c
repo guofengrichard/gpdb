@@ -43,6 +43,9 @@
 #define RESGROUP_DEFAULT_MEM_SHARED_QUOTA (20)
 #define RESGROUP_DEFAULT_MEM_SPILL_RATIO (20)
 
+#define RESGROUP_DEFAULT_MEM_AUDITOR (RESGROUP_MEMORY_AUDITOR_VMTRACKER)
+#define RESGROUP_INVALID_MEM_AUDITOR (-1)
+
 #define RESGROUP_MIN_CONCURRENCY	(0)
 #define RESGROUP_MAX_CONCURRENCY	(MaxConnections)
 
@@ -63,8 +66,8 @@
  */
 static const char *ResGroupMemAuditorName[] =
 {
-	"default",	// RESGROUP_MEMORY_AUDITOR_DEFAULT
-	"cgroup"	// RESGROUP_MEMORY_AUDITOR_CGROUP
+	"vmtracker",	// RESGROUP_MEMORY_AUDITOR_VMTRACKER
+	"cgroup"		// RESGROUP_MEMORY_AUDITOR_CGROUP
 };
 
 /*
@@ -823,12 +826,12 @@ checkResgroupCapLimit(ResGroupLimitType type, int value)
 				break;
 
 			case RESGROUP_LIMIT_TYPE_MEMORY_AUDITOR:
-				if (value != RESGROUP_MEMORY_AUDITOR_DEFAULT &&
+				if (value != RESGROUP_MEMORY_AUDITOR_VMTRACKER &&
 					value != RESGROUP_MEMORY_AUDITOR_CGROUP)
 					ereport(ERROR,
 							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 							errmsg("memory_auditor should be \"%s\" or \"%s\"",
-								   ResGroupMemAuditorName[RESGROUP_MEMORY_AUDITOR_DEFAULT],
+								   ResGroupMemAuditorName[RESGROUP_MEMORY_AUDITOR_VMTRACKER],
 								   ResGroupMemAuditorName[RESGROUP_MEMORY_AUDITOR_CGROUP])));
 				break;
 
@@ -907,7 +910,7 @@ parseStmtOptions(CreateResourceGroupStmt *stmt, ResGroupCaps *caps)
 		caps->memSpillRatio = RESGROUP_DEFAULT_MEM_SPILL_RATIO;
 
 	if (!(mask & (1 << RESGROUP_LIMIT_TYPE_MEMORY_AUDITOR)))
-		caps->memAuditor = RESGROUP_MEMORY_AUDITOR_DEFAULT;
+		caps->memAuditor = RESGROUP_DEFAULT_MEM_AUDITOR;
 
 	checkResgroupMemAuditor(caps);
 }
@@ -1287,5 +1290,5 @@ getResGroupMemAuditor(char *name)
 			return index;
 	}
 
-	return -1;
+	return RESGROUP_INVALID_MEM_AUDITOR;
 }
