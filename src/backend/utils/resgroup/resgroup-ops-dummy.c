@@ -164,6 +164,8 @@ ResGroupOps_GetCpuUsage(Oid group)
 
 /*
  * Get the memory usage of the OS group
+ *
+ * memory usage is returned in chunks
  */
 int32
 ResGroupOps_GetMemoryUsage(Oid group)
@@ -174,6 +176,8 @@ ResGroupOps_GetMemoryUsage(Oid group)
 
 /*
  * Get the memory limit of the OS group
+ *
+ * memory limit is returned in chunks
  */
 int32
 ResGroupOps_GetMemoryLimit(Oid group)

@@ -169,9 +169,9 @@ CREATE RESOURCE GROUP rg_test_group WITH (concurrency=-1, cpu_rate_limit=10, mem
 ERROR:  concurrency range is [0, 'max_connections']
 CREATE RESOURCE GROUP rg_test_group WITH (concurrency=26, cpu_rate_limit=10, memory_limit=10);
 ERROR:  concurrency range is [0, 'max_connections']
--- negative: memory_auditor should be 'default' or 'cgroup'
-CREATE RESOURCE GROUP rg_test_group WITH (concurrency=0, cpu_rate_limit=10, memory_limit=10, memory_auditor="randomtest");
-ERROR:  memory_auditor should be "default" or "cgroup"
+-- negative: memory_auditor should be 'vmtracker' or 'cgroup'
+CREATE RESOURCE GROUP rg_test_group WITH (concurrency=0, cpu_rate_limit=10, memory_limit=10, memory_auditor="randomtext");
+ERROR:  memory_auditor should be "vmtracker" or "cgroup"
 -- negative: concurrency should be zero for cgroup audited resource group
 CREATE RESOURCE GROUP rg_test_group WITH (concurrency=1, cpu_rate_limit=10, memory_limit=10, memory_auditor="cgroup");
 ERROR:  resource group concurrency must be 0 when group memory_auditor is cgroup

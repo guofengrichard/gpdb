@@ -147,19 +147,18 @@ struct ResGroupSlotData
 };
 
 /*
- * Resource group operations.
+ * Resource group operations for memory.
  *
  * Groups with different memory auditor will have different
  * operations.
  */
-typedef struct ResGroupOperations
+typedef struct ResGroupMemOperations
 {
-	void (*group_check_for_drop) (ResGroupData *group, char *name);
-	void (*group_drop_finish) (ResGroupData *group);
-	void (*group_alter_mem) (Oid groupId, ResGroupData *group);
-	void (*group_release_mem) (Oid groupId, ResGroupData *group);
-	void (*group_wakeup) (ResGroupData *group);
-} ResGroupOperations;
+	void (*group_mem_on_create) (Oid groupId, ResGroupData *group);
+	void (*group_mem_on_alter) (Oid groupId, ResGroupData *group);
+	void (*group_mem_on_drop) (Oid groupId, ResGroupData *group);
+	void (*group_mem_on_notify) (ResGroupData *group);
+} ResGroupMemOperations;
 
 /*
  * Resource group information.
@@ -202,7 +201,7 @@ struct ResGroupData
 	/*
 	 * operation functions for resource group
 	 */
-	const ResGroupOperations *group_op;
+	const ResGroupMemOperations *groupMemOps;
 };
 
 struct ResGroupControl
@@ -261,7 +260,7 @@ static int32 slotGetMemQuotaExpected(const ResGroupCaps *caps);
 static int32 slotGetMemQuotaOnQE(const ResGroupCaps *caps, ResGroupData *group);
 static int32 slotGetMemSpill(const ResGroupCaps *caps);
 static void wakeupSlots(ResGroupData *group, bool grant);
-static void wakeupGroups(Oid skipGroupId);
+static void notifyGroupsOnMem(Oid skipGroupId);
 static int32 mempoolAutoRelease(ResGroupData *group);
 static int32 mempoolAutoReserve(ResGroupData *group, const ResGroupCaps *caps);
 static ResGroupData *groupHashNew(Oid groupId);
@@ -326,16 +325,15 @@ static ResGroupSlotData *sessionGetSlot(void);
 static void sessionResetSlot(void);
 
 static void bindGroupOperation(ResGroupData *group);
-static void ResGroupCheckForDropDefault(ResGroupData *group, char *name);
-static void ResGroupAlterMemDefault(Oid groupId, ResGroupData *group);
-static void ResGroupReleaseMemDefault(Oid groupId, ResGroupData *group);
-static void ResGroupDropFinishDefault(ResGroupData *group);
-static void ResGroupWakeupDefault(ResGroupData *group);
-static void ResGroupAlterMemCgroup(Oid groupId, ResGroupData *group);
-static void ResGroupReleaseMemCgroup(Oid groupId, ResGroupData *group);
+static void groupMemOnAlterForVmtracker(Oid groupId, ResGroupData *group);
+static void groupMemOnDropForVmtracker(Oid groupId, ResGroupData *group);
+static void groupMemOnNotifyForVmtracker(ResGroupData *group);
+
+static void groupMemOnAlterForCgroup(Oid groupId, ResGroupData *group);
+static void groupMemOnDropForCgroup(Oid groupId, ResGroupData *group);
+static void groupMemOnNotifyForCgroup(ResGroupData *group);
 static void groupApplyCgroupMemInc(ResGroupData *group);
 static void groupApplyCgroupMemDec(ResGroupData *group);
-static void ResGroupWakeupCgroup(ResGroupData *group);
 
 #ifdef USE_ASSERT_CHECKING
 static bool selfHasGroup(void);
@@ -348,25 +346,23 @@ static bool groupWaitQueueFind(ResGroupData *group, const PGPROC *proc);
 #endif /* USE_ASSERT_CHECKING */
 
 /*
- * Operations for resource group with default memory auditor.
+ * Operations of memory for resource groups with vmtracker memory auditor.
  */
-static const ResGroupOperations resgroup_default_operations = {
-	.group_check_for_drop = ResGroupCheckForDropDefault,
-	.group_drop_finish = ResGroupDropFinishDefault,
-	.group_alter_mem = ResGroupAlterMemDefault,
-	.group_release_mem = ResGroupReleaseMemDefault,
-	.group_wakeup = ResGroupWakeupDefault,
+static const ResGroupMemOperations resgroup_memory_operations_vmtracker = {
+	.group_mem_on_create	= NULL,
+	.group_mem_on_alter		= groupMemOnAlterForVmtracker,
+	.group_mem_on_drop		= groupMemOnDropForVmtracker,
+	.group_mem_on_notify	= groupMemOnNotifyForVmtracker,
 };
 
 /*
- * Operations for resource group with cgroup memory auditor.
+ * Operations of memory for resource groups with cgroup memory auditor.
  */
-static const ResGroupOperations resgroup_cgroup_operations = {
-	.group_check_for_drop = NULL,
-	.group_drop_finish = NULL,
-	.group_alter_mem = ResGroupAlterMemCgroup,
-	.group_release_mem = ResGroupReleaseMemCgroup,
-	.group_wakeup = ResGroupWakeupCgroup,
+static const ResGroupMemOperations resgroup_memory_operations_cgroup = {
+	.group_mem_on_create	= NULL,
+	.group_mem_on_alter		= groupMemOnAlterForCgroup,
+	.group_mem_on_drop		= groupMemOnDropForCgroup,
+	.group_mem_on_notify	= groupMemOnNotifyForCgroup,
 };
 
 /*
@@ -597,9 +593,20 @@ ResGroupCheckForDrop(Oid groupId, char *name)
 
 	group = groupHashFind(groupId, true);
 
-	Assert(group->group_op != NULL);
-	if (group->group_op->group_check_for_drop)
-		group->group_op->group_check_for_drop(group, name);
+	if (group->nRunning > 0)
+	{
+		int nQuery = group->nRunning + group->waitProcs.size;
+
+		Assert(name != NULL);
+		ereport(ERROR,
+				(errcode(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+				 errmsg("cannot drop resource group \"%s\"", name),
+				 errhint(" The resource group is currently managing %d query(ies) and cannot be dropped.\n"
+						 "\tTerminate the queries first or try dropping the group later.\n"
+						 "\tThe view pg_stat_activity tracks the queries managed by resource groups.", nQuery)));
+	}
+
+	lockResGroupForDrop(group);
 
 	LWLockRelease(ResGroupLock);
 }
@@ -628,10 +635,8 @@ ResGroupDropFinish(Oid groupId, bool isCommit)
 		if (Gp_role == GP_ROLE_DISPATCH)
 		{
 			group = groupHashFind(groupId, true);
-
-			Assert(group->group_op != NULL);
-			if (group->group_op->group_drop_finish)
-				group->group_op->group_drop_finish(group);
+			wakeupSlots(group, false);
+			unlockResGroupForDrop(group);
 		}
 
 		if (isCommit)
@@ -726,9 +731,9 @@ ResGroupAlterOnCommit(Oid groupId,
 			Assert(pResGroupControl->totalChunks > 0);
 			group->memGap += pResGroupControl->totalChunks * memLimitGap / 100;
 
-			Assert(group->group_op != NULL);
-			if (group->group_op->group_alter_mem)
-				group->group_op->group_alter_mem(groupId, group);
+			Assert(group->groupMemOps != NULL);
+			if (group->groupMemOps->group_mem_on_alter)
+				group->groupMemOps->group_mem_on_alter(groupId, group);
 		}
 	}
 	PG_CATCH();
@@ -1037,12 +1042,12 @@ removeGroup(Oid groupId)
 
 	group = groupHashRemove(groupId);
 
-	Assert(group->group_op != NULL);
-	if (group->group_op->group_release_mem)
-		group->group_op->group_release_mem(groupId, group);
+	Assert(group->groupMemOps != NULL);
+	if (group->groupMemOps->group_mem_on_drop)
+		group->groupMemOps->group_mem_on_drop(groupId, group);
 
 	group->groupId = InvalidOid;
-	wakeupGroups(groupId);
+	notifyGroupsOnMem(groupId);
 }
 
 /*
@@ -1074,7 +1079,7 @@ createGroup(Oid groupId, const ResGroupCaps *caps)
 	group->memUsage = 0;
 	group->memSharedUsage = 0;
 	group->memQuotaUsed = 0;
-	group->group_op = NULL;
+	group->groupMemOps = NULL;
 	memset(&group->totalQueuedTime, 0, sizeof(group->totalQueuedTime));
 	group->lockedForDrop = false;
 
@@ -1098,10 +1103,10 @@ bindGroupOperation(ResGroupData *group)
 {
 	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
 
-	if (group->caps.memAuditor == RESGROUP_MEMORY_AUDITOR_DEFAULT)
-		group->group_op = &resgroup_default_operations;
+	if (group->caps.memAuditor == RESGROUP_MEMORY_AUDITOR_VMTRACKER)
+		group->groupMemOps = &resgroup_memory_operations_vmtracker;
 	else if (group->caps.memAuditor == RESGROUP_MEMORY_AUDITOR_CGROUP)
-		group->group_op = &resgroup_cgroup_operations;
+		group->groupMemOps = &resgroup_memory_operations_cgroup;
 	else
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -1366,7 +1371,7 @@ groupPutSlot(ResGroupData *group, ResGroupSlotData *slot)
 	/* And finally release the overused memory quota */
 	released = mempoolAutoRelease(group);
 	if (released > 0)
-		wakeupGroups(group->groupId);
+		notifyGroupsOnMem(group->groupId);
 
 	/*
 	 * Once we have waken up other groups then the slot we just released
@@ -1810,13 +1815,13 @@ wakeupSlots(ResGroupData *group, bool grant)
 
 /*
  * When a group returns chunks to MEM POOL, we need to:
- * 1. For groups with default memory auditor, wake up the
+ * 1. For groups with vmtracker memory auditor, wake up the
  *    transactions waiting on them for memory quota.
  * 2. For groups with cgroup memory auditor, increase their
  *    memory limit if needed.
  */
 static void
-wakeupGroups(Oid skipGroupId)
+notifyGroupsOnMem(Oid skipGroupId)
 {
 	int				i;
 
@@ -1832,9 +1837,9 @@ wakeupGroups(Oid skipGroupId)
 		if (group->groupId == skipGroupId)
 			continue;
 
-		Assert(group->group_op != NULL);
-		if (group->group_op->group_wakeup)
-			group->group_op->group_wakeup(group);
+		Assert(group->groupMemOps != NULL);
+		if (group->groupMemOps->group_mem_on_notify)
+			group->groupMemOps->group_mem_on_notify(group);
 
 		if (!pResGroupControl->freeChunks)
 			break;
@@ -2198,7 +2203,7 @@ UnassignResGroup(void)
 		/* And finally release the overused memory quota */
 		released = mempoolAutoRelease(group);
 		if (released > 0)
-			wakeupGroups(group->groupId);
+			notifyGroupsOnMem(group->groupId);
 
 	}
 
@@ -3214,57 +3219,29 @@ sessionResetSlot(void)
 }
 
 /*
- * Check resource group status when DROP RESOURCE GROUP
- *
- * Errors out if there're running transactions, otherwise lock the resource group.
- * New transactions will be queued if the resource group is locked.
- */
-static void
-ResGroupCheckForDropDefault(ResGroupData *group, char *name)
-{
-	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
-	Assert(Gp_role == GP_ROLE_DISPATCH);
-
-	if (group->nRunning > 0)
-	{
-		int nQuery = group->nRunning + group->waitProcs.size;
-
-		Assert(name != NULL);
-		ereport(ERROR,
-				(errcode(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-				 errmsg("cannot drop resource group \"%s\"", name),
-				 errhint(" The resource group is currently managing %d query(ies) and cannot be dropped.\n"
-						 "\tTerminate the queries first or try dropping the group later.\n"
-						 "\tThe view pg_stat_activity tracks the queries managed by resource groups.", nQuery)));
-	}
-
-	lockResGroupForDrop(group);
-}
-
-/*
- * Operation for resource group with default memory auditor
+ * Operation for resource groups with vmtracker memory auditor
  * when alter its memory limit.
  */
 static void
-ResGroupAlterMemDefault(Oid groupId, ResGroupData *group)
+groupMemOnAlterForVmtracker(Oid groupId, ResGroupData *group)
 {
-	bool shouldWakeUp;
+	bool shouldNotify;
 
 	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
 
-	shouldWakeUp = groupApplyMemCaps(group);
+	shouldNotify = groupApplyMemCaps(group);
 
 	wakeupSlots(group, true);
-	if (shouldWakeUp)
-		wakeupGroups(groupId);
+	if (shouldNotify)
+		notifyGroupsOnMem(groupId);
 }
 
 /*
- * Operation for resource group with default memory auditor
+ * Operation for resource groups with vmtracker memory auditor
  * when reclaiming its memory back to MEM POOL.
  */
 static void
-ResGroupReleaseMemDefault(Oid groupId, ResGroupData *group)
+groupMemOnDropForVmtracker(Oid groupId, ResGroupData *group)
 {
 	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
 
@@ -3274,24 +3251,11 @@ ResGroupReleaseMemDefault(Oid groupId, ResGroupData *group)
 }
 
 /*
- * Operation for resource group with default memory auditor
- * when drop resource group.
+ * Operation for resource groups with vmtracker memory auditor
+ * when memory in MEM POOL is increased.
  */
 static void
-ResGroupDropFinishDefault(ResGroupData *group)
-{
-	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
-
-	wakeupSlots(group, false);
-	unlockResGroupForDrop(group);
-}
-
-/*
- * Operation for resource group with default memory auditor
- * when wakeup resource group.
- */
-static void
-ResGroupWakeupDefault(ResGroupData *group)
+groupMemOnNotifyForVmtracker(ResGroupData *group)
 {
 	int32			delta;
 
@@ -3314,20 +3278,30 @@ ResGroupWakeupDefault(ResGroupData *group)
 }
 
 /*
- * Operation for resource group with cgroup memory auditor
+ * Operation for resource groups with cgroup memory auditor
  * when alter its memory limit.
  */
 static void
-ResGroupAlterMemCgroup(Oid groupId, ResGroupData *group)
+groupMemOnAlterForCgroup(Oid groupId, ResGroupData *group)
 {
 	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
 
+	/*
+	 * If memGap is positive, it indicates this group should
+	 * give back these many memory back to MEM POOL.
+	 *
+	 * If memGap is negative, it indicates this group should
+	 * retrieve these many memory from MEM POOL.
+	 *
+	 * If memGap is zero, this group is holding the same memory
+	 * as it expects.
+	 */
 	if (group->memGap == 0)
 		return;
 
-	if (group->memGap > 0)	// Decrease
+	if (group->memGap > 0)
 		groupApplyCgroupMemDec(group);
-	else					// Increase
+	else
 		groupApplyCgroupMemInc(group);
 }
 
@@ -3384,17 +3358,17 @@ groupApplyCgroupMemDec(ResGroupData *group)
 	ResGroupOps_UnLockGroup(group->groupId, fd);
 
 	mempoolRelease(group->groupId, memory_dec);
-	wakeupGroups(group->groupId);
+	notifyGroupsOnMem(group->groupId);
 
 	group->memGap -= memory_dec;
 }
 
 /*
- * Operation for resource group with cgroup memory auditor
+ * Operation for resource groups with cgroup memory auditor
  * when reclaiming its memory back to MEM POOL.
  */
 static void
-ResGroupReleaseMemCgroup(Oid groupId, ResGroupData *group)
+groupMemOnDropForCgroup(Oid groupId, ResGroupData *group)
 {
 	int32 memory_expected;
 
@@ -3406,11 +3380,11 @@ ResGroupReleaseMemCgroup(Oid groupId, ResGroupData *group)
 }
 
 /*
- * Operation for resource group with cgroup memory auditor
- * when wakeup resource group.
+ * Operation for resource groups with cgroup memory auditor
+ * when memory in MEM POOL is increased.
  */
 static void
-ResGroupWakeupCgroup(ResGroupData *group)
+groupMemOnNotifyForCgroup(ResGroupData *group)
 {
 	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
 
