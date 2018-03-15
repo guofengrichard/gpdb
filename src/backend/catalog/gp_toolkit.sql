@@ -1764,40 +1764,36 @@ GRANT SELECT ON gp_toolkit.gp_resqueue_status TO public;
 
 CREATE VIEW gp_toolkit.gp_resgroup_config AS
     SELECT
-        G.oid       AS groupid,
-        G.rsgname   AS groupname,
-        T1.value    AS concurrency,
-        T1.proposed AS proposed_concurrency,
-        T2.value    AS cpu_rate_limit,
-        T3.value    AS memory_limit,
-        T3.proposed AS proposed_memory_limit,
-        T4.value    AS memory_shared_quota,
-        T4.proposed AS proposed_memory_shared_quota,
-        T5.value    AS memory_spill_ratio,
-        T5.proposed AS proposed_memory_spill_ratio,
-        T6.value    AS memory_auditor,
-        T6.proposed AS proposed_memory_auditor
+        G.oid        AS groupid,
+        G.rsgname    AS groupname,
+        G.memauditor AS memauditor,
+        T1.value     AS concurrency,
+        T1.proposed  AS proposed_concurrency,
+        T2.value     AS cpu_rate_limit,
+        T3.value     AS memory_limit,
+        T3.proposed  AS proposed_memory_limit,
+        T4.value     AS memory_shared_quota,
+        T4.proposed  AS proposed_memory_shared_quota,
+        T5.value     AS memory_spill_ratio,
+        T5.proposed  AS proposed_memory_spill_ratio
     FROM
         pg_resgroup G,
         pg_resgroupcapability T1,
         pg_resgroupcapability T2,
         pg_resgroupcapability T3,
         pg_resgroupcapability T4,
-        pg_resgroupcapability T5,
-        pg_resgroupcapability T6
+        pg_resgroupcapability T5
     WHERE
         G.oid = T1.resgroupid
     AND G.oid = T2.resgroupid
     AND G.oid = T3.resgroupid
     AND G.oid = T4.resgroupid
     AND G.oid = T5.resgroupid
-    AND G.oid = T6.resgroupid
     AND T1.reslimittype = 1
     AND T2.reslimittype = 2
     AND T3.reslimittype = 3
     AND T4.reslimittype = 4
     AND T5.reslimittype = 5
-    AND T6.reslimittype = 6
     ;
 
 GRANT SELECT ON gp_toolkit.gp_resgroup_config TO public;

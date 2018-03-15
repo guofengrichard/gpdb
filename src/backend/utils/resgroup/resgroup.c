@@ -184,6 +184,7 @@ struct ResGroupData
 	 * give back to MEM POOL.
 	 */
 	int32       memGap;
+	int32		memAuditor;
 
 	int32		memExpected;		/* expected memory chunks according to current caps */
 	int32		memQuotaGranted;	/* memory chunks for quota part */
@@ -268,7 +269,7 @@ static ResGroupData *groupHashNew(Oid groupId);
 static ResGroupData *groupHashFind(Oid groupId, bool raise);
 static ResGroupData *groupHashRemove(Oid groupId);
 static void waitOnGroup(ResGroupData *group);
-static ResGroupData *createGroup(Oid groupId, const ResGroupCaps *caps);
+static ResGroupData *createGroup(Oid groupId, const ResGroupOptions *groupOptions);
 static void removeGroup(Oid groupId);
 static void AtProcExit_ResGroup(int code, Datum arg);
 static void groupWaitCancel(void);
@@ -461,13 +462,13 @@ error_out:
  * Allocate a resource group entry from a hash table
  */
 void
-AllocResGroupEntry(Oid groupId, const ResGroupCaps *caps)
+AllocResGroupEntry(Oid groupId, const ResGroupOptions *groupOptions)
 {
 	ResGroupData	*group;
 
 	LWLockAcquire(ResGroupLock, LW_EXCLUSIVE);
 
-	group = createGroup(groupId, caps);
+	group = createGroup(groupId, groupOptions);
 	Assert(group != NULL);
 
 	LWLockRelease(ResGroupLock);
@@ -486,7 +487,6 @@ InitResGroups(void)
 	int			numGroups;
 	CdbComponentDatabases *cdbComponentDBs;
 	CdbComponentDatabaseInfo *qdinfo;
-	ResGroupCaps		caps;
 	Relation			relResGroup;
 	Relation			relResGroupCapability;
 
@@ -542,18 +542,19 @@ InitResGroups(void)
 	while (HeapTupleIsValid(tuple = systable_getnext(sscan)))
 	{
 		ResGroupData	*group;
-		int cpuRateLimit;
+		ResGroupOptions groupOptions;
 		Oid groupId = HeapTupleGetOid(tuple);
 
-		GetResGroupCapabilities(relResGroupCapability, groupId, &caps);
-		cpuRateLimit = caps.cpuRateLimit;
+		groupOptions.memAuditor = GetResGroupMemAuditorFromTuple(relResGroup, tuple);
 
-		group = createGroup(groupId, &caps);
+		GetResGroupCapabilities(relResGroupCapability, groupId, &groupOptions.caps);
+
+		group = createGroup(groupId, &groupOptions);
 		Assert(group != NULL);
 
 		ResGroupOps_CreateGroup(groupId);
-		ResGroupOps_SetCpuRateLimit(groupId, cpuRateLimit);
-		ResGroupOps_SetMemoryLimit(groupId, caps.memLimit);
+		ResGroupOps_SetCpuRateLimit(groupId, groupOptions.caps.cpuRateLimit);
+		ResGroupOps_SetMemoryLimit(groupId, groupOptions.caps.memLimit);
 
 		numGroups++;
 		Assert(numGroups <= MaxResourceGroups);
@@ -1059,7 +1060,7 @@ removeGroup(Oid groupId)
  *	calling this - unless we are the startup process.
  */
 static ResGroupData *
-createGroup(Oid groupId, const ResGroupCaps *caps)
+createGroup(Oid groupId, const ResGroupOptions *groupOptions)
 {
 	ResGroupData	*group;
 	int32			chunks;
@@ -1071,12 +1072,13 @@ createGroup(Oid groupId, const ResGroupCaps *caps)
 	Assert(group != NULL);
 
 	group->groupId = groupId;
-	group->caps = *caps;
+	group->caps = groupOptions->caps;
 	group->nRunning = 0;
 	ProcQueueInit(&group->waitProcs);
 	group->totalExecuted = 0;
 	group->totalQueued = 0;
 	group->memGap = 0;
+	group->memAuditor = groupOptions->memAuditor;
 	group->memUsage = 0;
 	group->memSharedUsage = 0;
 	group->memQuotaUsed = 0;
@@ -1086,10 +1088,10 @@ createGroup(Oid groupId, const ResGroupCaps *caps)
 
 	group->memQuotaGranted = 0;
 	group->memSharedGranted = 0;
-	group->memExpected = groupGetMemExpected(caps);
+	group->memExpected = groupGetMemExpected(&groupOptions->caps);
 
 	chunks = mempoolReserve(groupId, group->memExpected);
-	groupRebalanceQuota(group, chunks, caps);
+	groupRebalanceQuota(group, chunks, &groupOptions->caps);
 
 	bindGroupOperation(group);
 
@@ -1104,14 +1106,14 @@ bindGroupOperation(ResGroupData *group)
 {
 	Assert(LWLockHeldExclusiveByMe(ResGroupLock));
 
-	if (group->caps.memAuditor == RESGROUP_MEMORY_AUDITOR_VMTRACKER)
+	if (group->memAuditor == RESGROUP_MEMORY_AUDITOR_VMTRACKER)
 		group->groupMemOps = &resgroup_memory_operations_vmtracker;
-	else if (group->caps.memAuditor == RESGROUP_MEMORY_AUDITOR_CGROUP)
+	else if (group->memAuditor == RESGROUP_MEMORY_AUDITOR_CGROUP)
 		group->groupMemOps = &resgroup_memory_operations_cgroup;
 	else
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("invalid memory auditor: %d", group->caps.memAuditor)));
+				 errmsg("invalid memory auditor: %d", group->memAuditor)));
 }
 
 /*
