@@ -276,7 +276,7 @@ static void ATPrepCmd(List **wqueue, Relation rel, AlterTableCmd *cmd,
 		  bool recurse, bool recursing);
 static void ATRewriteCatalogs(List **wqueue);
 static void ATAddToastIfNeeded(List **wqueue);
-static void ATExecCmd(List **wqueue, AlteredTableInfo *tab, Relation rel,
+static void ATExecCmd(List **wqueue, AlteredTableInfo *tab, Relation *rel_p,
 		  AlterTableCmd *cmd);
 static void ATRewriteTables(List **wqueue);
 static void ATRewriteTable(AlteredTableInfo *tab, Oid OIDNewHeap);
@@ -4543,7 +4543,7 @@ ATRewriteCatalogs(List **wqueue)
 			foreach(lcmd, subcmds)
 			{
 				AlterTableCmd	*atc = (AlterTableCmd *) lfirst(lcmd);
-				ATExecCmd(wqueue, tab, rel, atc);
+				ATExecCmd(wqueue, tab, &rel, atc);
 
 				/*
 				 * SET DISTRIBUTED BY() calls RelationForgetRelation(),
@@ -4594,11 +4594,17 @@ ATAddToastIfNeeded(List **wqueue)
 
 /*
  * ATExecCmd: dispatch a subcommand to appropriate execution routine
+ *
+ * NOTE: we need to use a pointer to Relation here since the relation
+ * address may be changed by ATPExecPartSplit(). This is different
+ * behavior from Postgres upstream.
  */
 static void
-ATExecCmd(List **wqueue, AlteredTableInfo *tab, Relation rel,
+ATExecCmd(List **wqueue, AlteredTableInfo *tab, Relation *rel_p,
 		  AlterTableCmd *cmd)
 {
+	Relation rel = *rel_p;
+
 	switch (cmd->subtype)
 	{
 		case AT_AddColumn:		/* ADD COLUMN */
@@ -4789,6 +4795,7 @@ ATExecCmd(List **wqueue, AlteredTableInfo *tab, Relation rel,
 			 * reference a valid relcache object through rel.
 			 */
             ATPExecPartSplit(&rel, (AlterPartitionCmd *) cmd->def);
+			*rel_p = rel;
             break;
 		case AT_PartTruncate:			/* Truncate */
 			ATPExecPartTruncate(rel, (AlterPartitionCmd *) cmd->def);
@@ -13332,7 +13339,7 @@ ATPExecPartAlter(List **wqueue, AlteredTableInfo *tab, Relation rel,
 	}
 
 	/* execute the command */
-	ATExecCmd(wqueue, tab, rel2, atc);
+	ATExecCmd(wqueue, tab, &rel2, atc);
 
 	if (!bPartitionCmd)
 	{
