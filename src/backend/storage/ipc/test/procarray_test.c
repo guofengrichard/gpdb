@@ -21,7 +21,7 @@ void setup(TmControlBlock *controlBlock)
 	*shmDistribTimeStamp = time(NULL);
 	*shmNumCommittedGxacts = 0;
 
-	allProcs = malloc(sizeof(PGPROC)*MAX_PROCS);
+	allTmGxact = malloc(sizeof(TMGXACT)*MAX_PROCS);
 
 
 	procArray = malloc(sizeof(ProcArrayStruct) + sizeof(int) * (MAX_PROCS - 1));
@@ -65,7 +65,7 @@ test__CreateDistributedSnapshot(void **state)
 
 	procArray->numProcs = 1;
 
-	MyProc = &allProcs[procArray->pgprocnos[0]];
+	MyTmGxact = &allTmGxact[procArray->pgprocnos[0]];
 
 	/********************************************************
 	 * Basic case, no other in progress transaction in system
@@ -136,7 +136,7 @@ test__CreateDistributedSnapshot(void **state)
 
 	free(distribSnapshotWithLocalMapping.inProgressMappedLocalXids);
 	free(ds->inProgressXidArray);
-	free(allProcs);
+	free(allTmGxact);
 	free(procArray);
 }
 
