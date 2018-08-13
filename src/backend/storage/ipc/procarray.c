@@ -1610,7 +1610,7 @@ getAllDistributedXactStatus(TMGALLXACTSTATUS **allDistributedXactStatus)
 			palloc(MAXALIGN(count * sizeof(TMGXACTSTATUS)));
 		for (i = 0; i < count; i++)
 		{
-			TMGXACT *gxact = &allTmGxact[arrayP->pgprocnos[i]];
+			volatile TMGXACT *gxact = &allTmGxact[arrayP->pgprocnos[i]];
 
 			all->statusArray[i].gxid = gxact->gxid;
 			if (strlen(gxact->gid) >= TMGIDSIZE)
@@ -1688,7 +1688,7 @@ getDtxCheckPointInfo(char **result, int *result_size)
 	for (i = 0; i < arrayP->numProcs; i++)
 	{
 		TMGXACT_LOG *gxact_log;
-		TMGXACT *gxact = &allTmGxact[arrayP->pgprocnos[i]];
+		volatile TMGXACT *gxact = &allTmGxact[arrayP->pgprocnos[i]];
 
 		if (!includeInCheckpointIsNeeded(gxact))
 			continue;
