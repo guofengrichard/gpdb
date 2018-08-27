@@ -176,7 +176,7 @@ gen_implied_qual(PlannerInfo *root,
 								  old_rinfo->outerjoin_delayed,
 								  old_rinfo->pseudoconstant,
 								  new_qualscope,
-								  old_rinfo->outer_relids, /* GPDB_92_MERGE_FIXME */
+								  old_rinfo->outer_relids,
 								  old_rinfo->nullable_relids,
 								  old_rinfo->ojscope_relids);
 	check_mergejoinable(new_rinfo);
@@ -196,6 +196,21 @@ gen_implied_qual(PlannerInfo *root,
 
 		add_vars_to_targetlist(root, vars, new_qualscope, false);
 		list_free(vars);
+	}
+
+	/*
+	 * If the clause has a mergejoinable operator, process the equivalence
+	 * class with below_outer_join being true. This would set left_ec/right_ec.
+	 * Ohterwise, a mergejoinable operator with NULL left_ec/right_ec will
+	 * cause update_mergeclause_eclasses fails at assertion.
+	 */
+	if (new_rinfo->mergeopfamilies)
+	{
+		if (process_equivalence(root, new_rinfo, true))
+			return;
+		/* EC rejected it, so set left_ec/right_ec the hard way ... */
+		initialize_mergeclause_eclasses(root, new_rinfo);
+		/* ... and fall through to distribute_restrictinfo_to_rels */
 	}
 
 	distribute_restrictinfo_to_rels(root, new_rinfo);
