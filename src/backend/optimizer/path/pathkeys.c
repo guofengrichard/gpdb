@@ -199,19 +199,12 @@ gen_implied_qual(PlannerInfo *root,
 	}
 
 	/*
-	 * If the clause has a mergejoinable operator, process the equivalence
-	 * class with below_outer_join being true. This would set left_ec/right_ec.
-	 * Ohterwise, a mergejoinable operator with NULL left_ec/right_ec will
-	 * cause update_mergeclause_eclasses fails at assertion.
+	 * If the clause has a mergejoinable operator, set the EquivalenceClass
+	 * links. Otherwise, a mergejoinable operator with NULL left_ec/right_ec
+	 * will cause update_mergeclause_eclasses fails at assertion.
 	 */
 	if (new_rinfo->mergeopfamilies)
-	{
-		if (process_equivalence(root, new_rinfo, true))
-			return;
-		/* EC rejected it, so set left_ec/right_ec the hard way ... */
 		initialize_mergeclause_eclasses(root, new_rinfo);
-		/* ... and fall through to distribute_restrictinfo_to_rels */
-	}
 
 	distribute_restrictinfo_to_rels(root, new_rinfo);
 }
