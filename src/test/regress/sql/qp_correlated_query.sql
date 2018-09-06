@@ -860,6 +860,23 @@ EXPLAIN SELECT DISTINCT a FROM qp_tab1 WHERE NOT (SELECT TRUE FROM qp_tab2 WHERE
 SELECT DISTINCT a FROM qp_tab1 WHERE NOT (SELECT TRUE FROM qp_tab2 WHERE EXISTS (SELECT * FROM qp_tab3 WHERE qp_tab2.c = qp_tab3.e));
 
 -- ----------------------------------------------------------------------
+-- Test: opfamily check in deduction from non-equivalence clauses
+-- ----------------------------------------------------------------------
+
+-- start_ignore
+DROP TABLE IF EXISTS qp_opf_a;
+DROP TABLE IF EXISTS qp_opf_b;
+
+CREATE TABLE qp_opf_a (f float8);
+CREATE TABLE qp_opf_b (f float8);
+INSERT INTO qp_opf_a VALUES ('0'), ('-0');
+INSERT INTO qp_opf_b VALUES ('0'), ('-0');
+-- end_ignore
+
+EXPLAIN SELECT * FROM qp_opf_a, qp_opf_b WHERE qp_opf_a.f = qp_opf_b.f AND qp_opf_a.f::text <> '-0';
+SELECT * FROM qp_opf_a, qp_opf_b WHERE qp_opf_a.f = qp_opf_b.f AND qp_opf_a.f::text <> '-0';
+
+-- ----------------------------------------------------------------------
 -- Test: teardown.sql
 -- ----------------------------------------------------------------------
 

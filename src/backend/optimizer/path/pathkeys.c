@@ -43,6 +43,8 @@ static PathKey *make_canonical_pathkey(PlannerInfo *root,
 static bool pathkey_is_redundant(PathKey *new_pathkey, List *pathkeys);
 static bool right_merge_direction(PlannerInfo *root, PathKey *pathkey);
 
+static bool op_in_eclass_opfamily(Oid opno, EquivalenceClass *eclass);
+
 
 /****************************************************************************
  *		PATHKEY CONSTRUCTION AND REDUNDANCY TESTING
@@ -102,6 +104,28 @@ replace_expression_mutator(Node *node, void *context)
 		return copyObject(repl->withThis);
 	}
 	return expression_tree_mutator(node, replace_expression_mutator, (void *) context);
+}
+
+/*
+ * op_in_eclass_opfamily
+ *
+ *		Return t iff operator 'opno' is in eclass's operator family.
+ *
+ * This function only considers search operators, not ordering operators.
+ */
+static bool
+op_in_eclass_opfamily(Oid opno, EquivalenceClass *eclass)
+{
+	ListCell	*lc;
+
+	foreach(lc, eclass->ec_opfamilies)
+	{
+		Oid		opfamily = lfirst_oid(lc);
+
+		if (op_in_opfamily(opno, opfamily))
+			return true;
+	}
+	return false;
 }
 
 /**
@@ -219,16 +243,17 @@ gen_implied_qual(PlannerInfo *root,
 static void
 gen_implied_quals(PlannerInfo *root, RestrictInfo *rinfo)
 {
-	ListCell   *lcec;
+	ListCell	*lcec;
+	Oid			opno;
 
 	/*
 	 * Is it safe to infer from this clause?
 	 */
 	if (contain_volatile_functions((Node *) rinfo->clause) ||
 		contain_subplans((Node *) rinfo->clause))
-	{
 		return;
-	}
+
+	opno = ((OpExpr *) rinfo->clause)->opno;
 
 	/*
 	 * Find every equivalence class that's relevant for this RestrictInfo.
@@ -240,6 +265,13 @@ gen_implied_quals(PlannerInfo *root, RestrictInfo *rinfo)
 	{
 		EquivalenceClass *eclass = (EquivalenceClass *) lfirst(lcec);
 		ListCell   *lcem1;
+
+		/*
+		 * Only generate derived clauses using operators from the same operator
+		 * family.
+		 */
+		if (!op_in_eclass_opfamily(opno, eclass))
+			continue;
 
 		/* Single-member ECs won't generate any deductions */
 		if (list_length(eclass->ec_members) <= 1)
