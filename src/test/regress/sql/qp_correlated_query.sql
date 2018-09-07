@@ -860,7 +860,7 @@ EXPLAIN SELECT DISTINCT a FROM qp_tab1 WHERE NOT (SELECT TRUE FROM qp_tab2 WHERE
 SELECT DISTINCT a FROM qp_tab1 WHERE NOT (SELECT TRUE FROM qp_tab2 WHERE EXISTS (SELECT * FROM qp_tab3 WHERE qp_tab2.c = qp_tab3.e));
 
 -- ----------------------------------------------------------------------
--- Test: opfamily check in deduction from non-equivalence clauses
+-- Test: non-equivalence clauses
 -- ----------------------------------------------------------------------
 
 -- start_ignore
@@ -875,6 +875,9 @@ INSERT INTO qp_opf_b VALUES ('0'), ('-0');
 
 EXPLAIN SELECT * FROM qp_opf_a, qp_opf_b WHERE qp_opf_a.f = qp_opf_b.f AND qp_opf_a.f::text <> '-0';
 SELECT * FROM qp_opf_a, qp_opf_b WHERE qp_opf_a.f = qp_opf_b.f AND qp_opf_a.f::text <> '-0';
+
+EXPLAIN SELECT * FROM qp_opf_a INNER JOIN qp_opf_b ON qp_opf_a.f = qp_opf_b.f AND CASE WHEN qp_opf_b.f::text = '-0' THEN 1 ELSE -1::float8 END < '0';
+SELECT * FROM qp_opf_a INNER JOIN qp_opf_b ON qp_opf_a.f = qp_opf_b.f AND CASE WHEN qp_opf_b.f::text = '-0' THEN 1 ELSE -1::float8 END < '0';
 
 -- ----------------------------------------------------------------------
 -- Test: teardown.sql

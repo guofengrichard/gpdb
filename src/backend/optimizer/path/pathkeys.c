@@ -164,8 +164,6 @@ gen_implied_qual(PlannerInfo *root,
 		return;
 
 	new_qualscope = pull_varnos(new_clause);
-
-	/* distribute_qual_to_rels doesn't accept pseudoconstants? XXX: doesn't it? */
 	if (new_qualscope == NULL)
 		return;
 
@@ -243,17 +241,37 @@ gen_implied_qual(PlannerInfo *root,
 static void
 gen_implied_quals(PlannerInfo *root, RestrictInfo *rinfo)
 {
-	ListCell	*lcec;
-	Oid			opno;
+	Expr	   *clause = rinfo->clause;
+	Oid			opno,
+				collation,
+				item1_type,
+				item2_type;
+	Expr	   *item1;
+	Expr	   *item2;
+	ListCell   *lcec;
 
-	/*
-	 * Is it safe to infer from this clause?
-	 */
-	if (contain_volatile_functions((Node *) rinfo->clause) ||
-		contain_subplans((Node *) rinfo->clause))
+	if (rinfo->pseudoconstant)
+		return;
+	if (!is_opclause(clause))
+		return;
+	if (list_length(((OpExpr *) clause)->args) != 2)
+		return;
+	if (contain_volatile_functions((Node *) clause) ||
+		contain_subplans((Node *) clause))
 		return;
 
-	opno = ((OpExpr *) rinfo->clause)->opno;
+	opno = ((OpExpr *) clause)->opno;
+	collation = ((OpExpr *) clause)->inputcollid;
+	item1 = (Expr *) get_leftop(clause);
+	item2 = (Expr *) get_rightop(clause);
+
+	item1 = canonicalize_ec_expression(item1,
+									   exprType((Node *) item1),
+									   collation);
+	item2 = canonicalize_ec_expression(item2,
+									   exprType((Node *) item2),
+									   collation);
+	op_input_types(opno, &item1_type, &item2_type);
 
 	/*
 	 * Find every equivalence class that's relevant for this RestrictInfo.
@@ -278,8 +296,7 @@ gen_implied_quals(PlannerInfo *root, RestrictInfo *rinfo)
 			continue;
 
 		if (!bms_overlap(eclass->ec_relids, rinfo->clause_relids))
-			continue;			/* none of the members can appear in the
-								 * clause */
+			continue;
 
 		foreach(lcem1, eclass->ec_members)
 		{
@@ -287,7 +304,7 @@ gen_implied_quals(PlannerInfo *root, RestrictInfo *rinfo)
 			ListCell   *lcem2;
 
 			if (!bms_overlap(em1->em_relids, rinfo->clause_relids))
-				continue;		/* this member cannot appear in the clause */
+				continue;
 
 			/*
 			 * Skip duplicating subplans clauses as multiple subplan node referring
@@ -296,6 +313,15 @@ gen_implied_quals(PlannerInfo *root, RestrictInfo *rinfo)
 			 */
 			if (contain_subplans((Node *) em1->em_expr))
 				continue;
+
+			/*
+			 * Skip if this EquivalenceMember does not match neither left expr
+			 * nor right expr.
+			 */
+			if (!((item1_type == em1->em_datatype && equal(item1, em1->em_expr)) ||
+					(item2_type == em1->em_datatype && equal(item2, em1->em_expr))))
+				continue;
+
 			/* now try to apply to others in the equivalence class */
 			foreach(lcem2, eclass->ec_members)
 			{
