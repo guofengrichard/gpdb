@@ -252,18 +252,30 @@ gen_implied_quals(PlannerInfo *root, RestrictInfo *rinfo)
 
 	if (rinfo->pseudoconstant)
 		return;
-	if (!is_opclause(clause))
-		return;
-	if (list_length(((OpExpr *) clause)->args) != 2)
-		return;
 	if (contain_volatile_functions((Node *) clause) ||
 		contain_subplans((Node *) clause))
 		return;
 
-	opno = ((OpExpr *) clause)->opno;
-	collation = ((OpExpr *) clause)->inputcollid;
-	item1 = (Expr *) get_leftop(clause);
-	item2 = (Expr *) get_rightop(clause);
+	if (is_opclause(clause))
+	{
+		if (list_length(((OpExpr *) clause)->args) != 2)
+			return;
+		opno = ((OpExpr *) clause)->opno;
+		collation = ((OpExpr *) clause)->inputcollid;
+		item1 = (Expr *) get_leftop(clause);
+		item2 = (Expr *) get_rightop(clause);
+	}
+	else if (clause && IsA(clause, ScalarArrayOpExpr))
+	{
+		if (list_length(((ScalarArrayOpExpr *) clause)->args) != 2)
+			return;
+		opno = ((ScalarArrayOpExpr *) clause)->opno;
+		collation = ((ScalarArrayOpExpr *) clause)->inputcollid;
+		item1 = (Expr *) get_leftscalararrayop(clause);
+		item2 = (Expr *) get_rightscalararrayop(clause);
+	}
+	else
+		return;
 
 	item1 = canonicalize_ec_expression(item1,
 									   exprType((Node *) item1),
