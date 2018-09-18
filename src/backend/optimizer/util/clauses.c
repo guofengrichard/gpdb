@@ -172,6 +172,38 @@ get_rightop(Expr *clause)
 		return NULL;
 }
 
+/*
+ * get_leftscalararrayop
+ *
+ * Returns the left operand of a clause of the form (scalar op ANY/ALL (array))
+ */
+Node *
+get_leftscalararrayop(Expr *clause)
+{
+	const ScalarArrayOpExpr *expr = (const ScalarArrayOpExpr *) clause;
+
+	if (expr->args != NIL)
+		return linitial(expr->args);
+	else
+		return NULL;
+}
+
+/*
+ * get_rightscalararrayop
+ *
+ * Returns the right operand in a clause of the form (scalar op ANY/ALL (array)).
+ */
+Node *
+get_rightscalararrayop(Expr *clause)
+{
+	const ScalarArrayOpExpr *expr = (const ScalarArrayOpExpr *) clause;
+
+	if (list_length(expr->args) >= 2)
+		return lsecond(expr->args);
+	else
+		return NULL;
+}
+
 /*****************************************************************************
  *		NOT clause functions
  *****************************************************************************/
