@@ -418,7 +418,6 @@ getPartitionIndexNode(Oid rootOid,
 static char *
 constructIndexHashKey(Oid partOid,
 			Oid rootOid,
-			HeapTuple tup,
 			AttrNumber *attMap,
 			IndexInfo *ii,
 			LogicalIndexType indType)
@@ -561,8 +560,6 @@ recordIndexesOnLeafPart(PartitionIndexNode **pNodePtr,
 
 	char relstorage = partRel->rd_rel->relstorage;
 
-	heap_close(partRel, AccessShareLock);
-
 	/* fetch each index on part */
 	indexoidlist = RelationGetIndexList(partRel);
 	foreach(lc, indexoidlist)
@@ -596,7 +593,6 @@ recordIndexesOnLeafPart(PartitionIndexNode **pNodePtr,
 		 */
 		if (!attmap)
 		{
-			Relation partRel = heap_open(partOid, AccessShareLock);
 			Relation rootRel = heap_open(rootOid, AccessShareLock);
 
 			TupleDesc rootTupDesc = rootRel->rd_att;
@@ -605,7 +601,6 @@ recordIndexesOnLeafPart(PartitionIndexNode **pNodePtr,
 			attmap = varattnos_map(partTupDesc, rootTupDesc);
 			
 			/* can we close here ? */
-			heap_close(partRel, AccessShareLock);
 			heap_close(rootRel, AccessShareLock);
 		}
 
@@ -615,7 +610,7 @@ recordIndexesOnLeafPart(PartitionIndexNode **pNodePtr,
 		index_close(indRel, NoLock);
 
 		/* construct hash key for the index */
-		partIndexHashKey = constructIndexHashKey(partOid, rootOid, indRel->rd_indextuple, attmap, ii, indType);
+		partIndexHashKey = constructIndexHashKey(partOid, rootOid, attmap, ii, indType);
 
 		/* lookup PartitionIndexHash table */
 		partIndexHashEntry = (PartitionIndexHashEntry *)hash_search(PartitionIndexHash,
@@ -672,6 +667,8 @@ recordIndexesOnLeafPart(PartitionIndexNode **pNodePtr,
 		/* update the PartitionIndexNode -> index bitmap */
 		pNode->index = bms_add_member(pNode->index, partIndexHashEntry->logicalIndexId);
 	}
+
+	heap_close(partRel, AccessShareLock);
 }
 
 /*
