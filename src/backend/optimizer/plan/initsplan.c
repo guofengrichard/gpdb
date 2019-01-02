@@ -1323,6 +1323,7 @@ make_outerjoininfo(PlannerInfo *root,
 		{
 			if (bms_overlap(clause_relids, otherinfo->syn_righthand) &&
 				(jointype == JOIN_SEMI || jointype == JOIN_ANTI ||
+				 jointype == JOIN_LASJ_NOTIN ||
 				 !bms_overlap(strict_relids, otherinfo->min_righthand)))
 			{
 				min_lefthand = bms_add_members(min_lefthand,
@@ -1363,8 +1364,10 @@ make_outerjoininfo(PlannerInfo *root,
 				!bms_overlap(clause_relids, otherinfo->min_lefthand) ||
 				jointype == JOIN_SEMI ||
 				jointype == JOIN_ANTI ||
+				jointype == JOIN_LASJ_NOTIN ||
 				otherinfo->jointype == JOIN_SEMI ||
 				otherinfo->jointype == JOIN_ANTI ||
+				otherinfo->jointype == JOIN_LASJ_NOTIN ||
 				!otherinfo->lhs_strict || otherinfo->delay_upper_joins)
 			{
 				min_righthand = bms_add_members(min_righthand,
