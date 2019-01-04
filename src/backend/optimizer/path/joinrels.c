@@ -499,8 +499,9 @@ join_is_legal(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 			/*
 			 * The proposed join could still be legal, but only if we're
 			 * allowed to associate it into the RHS of this SJ.  That means
-			 * this SJ must be a LEFT join (not SEMI or ANTI, and certainly
-			 * not FULL) and the proposed join must not overlap the LHS.
+			 * this SJ must be a LEFT join (not SEMI, ANTI or LASJ, and
+			 * certainly not FULL) and the proposed join must not overlap the
+			 * LHS.
 			 */
 			if (sjinfo->jointype != JOIN_LEFT ||
 				bms_overlap(joinrelids, sjinfo->min_lefthand))
