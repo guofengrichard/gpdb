@@ -10667,6 +10667,12 @@ NOTICE:  CREATE TABLE will create partition "rewrite_rules_1_prt_extra" for tabl
 NOTICE:  CREATE TABLE will create partition "rewrite_rules_1_prt_2" for table "rewrite_rules"
 create rule "_RETURN" as on select to rewrite_rules_1_prt_2 do instead 
 select 1 as id, current_date as stamp, 1 as amount;
+-- start_matchsubs
+-- m/^ERROR:  plan contains range table with relstorage='v'/
+-- s/allpaths.c:\d*/allpaths.c/
+-- m/^ERROR:  undefined table type for storage format: v/
+-- s/execScan.c:\d*/execScan.c/
+-- end_matchsubs
 select * from rewrite_rules;
 ERROR:  undefined table type for storage format: v (execScan.c:414)
 set allow_system_table_mods='dml';

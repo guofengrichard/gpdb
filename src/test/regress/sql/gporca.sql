@@ -1633,6 +1633,12 @@ partition by range (stamp) (
 );
 create rule "_RETURN" as on select to rewrite_rules_1_prt_2 do instead 
 select 1 as id, current_date as stamp, 1 as amount;
+-- start_matchsubs
+-- m/^ERROR:  plan contains range table with relstorage='v'/
+-- s/allpaths.c:\d*/allpaths.c/
+-- m/^ERROR:  undefined table type for storage format: v/
+-- s/execScan.c:\d*/execScan.c/
+-- end_matchsubs
 select * from rewrite_rules;
 set allow_system_table_mods='dml';
 delete from gp_distribution_policy where localoid='rewrite_rules_1_prt_2'::regclass;

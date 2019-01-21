@@ -79,8 +79,12 @@ static bool recurse_pushdown_safe(Node *setOp, Query *topquery,
 					  bool *differentTypes);
 static void compare_tlist_datatypes(List *tlist, List *colTypes,
 						bool *differentTypes);
-static bool qual_is_pushdown_safe(Query *subquery, RangeTblEntry *rte, Index rti, Node *qual,
-					  bool *differentTypes);
+static bool qual_is_pushdown_safe(Query *subquery, RangeTblEntry *rte,
+						Index rti, Node *qual, bool *differentTypes);
+static bool qual_is_pushdown_safe_window_func(Query *subquery, Query *topquery,
+						AttrNumber resno);
+static bool recurse_qual_pushdown_safe_window_func(Node *setOp, Query *topquery,
+						AttrNumber resno);
 static void subquery_push_qual(Query *subquery,
 				   RangeTblEntry *rte, Index rti, Node *qual);
 static void recurse_push_qual(Node *setOp, Query *topquery,
@@ -1724,31 +1728,13 @@ qual_is_pushdown_safe(Query *subquery, RangeTblEntry *rte, Index rti, Node *qual
 			break;
 		}
 
-		/* MPP-19244:
-		 * if subquery has WINDOW clause, it is safe to push-down quals that
-		 * use columns included in in the Partition-By clauses of every OVER
-		 * clause in the subquery
-		 * */
-		if (subquery->windowClause != NIL)
+		/* Check if it is safe to push down through window functions */
+		if (!qual_is_pushdown_safe_window_func(subquery, subquery,
+					var->varattno))
 		{
-			ListCell   *lc = NULL;
-
-			foreach(lc, subquery->windowClause)
-			{
-				WindowSpec *ws = (WindowSpec *) lfirst(lc);
-
-				if (!targetIsInSortGroupList(tle, InvalidOid, ws->partition))
-				{
-					/*
-					 * qual's columns are not included in Partition-By clause,
-					 * so fail
-					 */
-					safe = false;
-					break;
-				}
-			}
+			safe = false;
+			break;
 		}
-
 	}
 
 	list_free(vars);
@@ -1756,6 +1742,95 @@ qual_is_pushdown_safe(Query *subquery, RangeTblEntry *rte, Index rti, Node *qual
 
 	return safe;
 }
+
+/*
+ * Check if it is safe to push down a qual through window functions.
+ */
+static bool
+qual_is_pushdown_safe_window_func(Query *subquery, Query *topquery,
+								  AttrNumber resno)
+{
+	TargetEntry *tle;
+
+	tle = get_tle_by_resno(subquery->targetList, resno);
+
+	/* MPP-19244:
+	 * if subquery has WINDOW clause, it is safe to push-down quals that
+	 * use columns included in in the Partition-By clauses of every OVER
+	 * clause in the subquery
+	 * */
+	if (subquery->windowClause != NIL)
+	{
+		ListCell   *lc = NULL;
+
+		foreach(lc, subquery->windowClause)
+		{
+			WindowSpec *ws = (WindowSpec *) lfirst(lc);
+
+			/*
+			 * Fail if qual's columns are not included in Partition-By clause
+			 */
+			if (!targetIsInSortGroupList(tle, InvalidOid, ws->partition))
+				return false;
+		}
+	}
+
+	/* Are we at top level, or looking at a setop component? */
+	if (subquery == topquery)
+	{
+		/* Top level, so check any component queries */
+		if (subquery->setOperations != NULL)
+			if (!recurse_qual_pushdown_safe_window_func(subquery->setOperations,
+						topquery, resno))
+				return false;
+	}
+	else
+	{
+		/* Setop component must not have more components (too weird) */
+		if (subquery->setOperations != NULL)
+			return false;
+	}
+
+	return true;
+}
+
+/*
+ * Helper routine to recurse through setOperations tree
+ */
+static bool
+recurse_qual_pushdown_safe_window_func(Node *setOp, Query *topquery,
+									   AttrNumber resno)
+{
+	if (IsA(setOp, RangeTblRef))
+	{
+		RangeTblRef *rtr = (RangeTblRef *) setOp;
+		RangeTblEntry *rte = rt_fetch(rtr->rtindex, topquery->rtable);
+		Query	   *subquery = rte->subquery;
+
+		Assert(subquery != NULL);
+		return qual_is_pushdown_safe_window_func(subquery, topquery, resno);
+	}
+	else if (IsA(setOp, SetOperationStmt))
+	{
+		SetOperationStmt *op = (SetOperationStmt *) setOp;
+
+		/* EXCEPT is no good */
+		if (op->op == SETOP_EXCEPT)
+			return false;
+		/* Else recurse */
+		if (!recurse_qual_pushdown_safe_window_func(op->larg, topquery, resno))
+			return false;
+		if (!recurse_qual_pushdown_safe_window_func(op->rarg, topquery, resno))
+			return false;
+	}
+	else
+	{
+		elog(ERROR, "unrecognized node type: %d",
+			 (int) nodeTag(setOp));
+	}
+	return true;
+}
+
 
 /*
  * subquery_push_qual - push down a qual that we have determined is safe
