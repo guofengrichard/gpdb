@@ -158,6 +158,7 @@ static Plan *pushdown_preliminary_limit(Plan *plan, Node *limitCount, int64 coun
 static Plan *getAnySubplan(Plan *node);
 static bool isSimplyUpdatableQuery(Query *query);
 
+static List *splitTargetListForSRF(List *tlist, List **srflist);
 
 /*****************************************************************************
  *
@@ -2572,6 +2573,7 @@ grouping_planner(PlannerInfo *root, double tuple_fraction)
 				Oid			firstOrderCmpOperator = InvalidOid;
 				bool		firstOrderNullsFirst = false;
 				bool		need_gather_for_partitioning;
+				List		*srf_tlist = NIL;
 
 				/*
 				 * Unless the PARTITION BY in the window happens to match the
@@ -2742,7 +2744,7 @@ grouping_planner(PlannerInfo *root, double tuple_fraction)
 				else
 				{
 					/* Install the original tlist in the topmost WindowAgg */
-					window_tlist = tlist;
+					window_tlist = splitTargetListForSRF(tlist, &srf_tlist);
 				}
 
 				/* ... and make the WindowAgg plan node */
@@ -2764,6 +2766,9 @@ grouping_planner(PlannerInfo *root, double tuple_fraction)
 								   wc->startOffset,
 								   wc->endOffset,
 								   result_plan);
+
+				if (srf_tlist)
+					result_plan = (Plan *) make_result(NULL, srf_tlist, NULL, result_plan);
 			}
 		}
 
@@ -3262,6 +3267,27 @@ grouping_planner(PlannerInfo *root, double tuple_fraction)
 #endif
 
 	return result_plan;
+}
+
+static List *
+splitTargetListForSRF(List *tlist, List **srflist)
+{
+	ListCell *lc;
+
+	foreach(lc, tlist)
+	{
+		Node	   *expr = lfirst(lc);
+		
+		if (expression_returns_set(expr))
+			*srflist = lappend(*srflist, expr);
+	}	
+
+	if(*srflist)
+    	tlist = flatten_tlist(*srflist,
+									 PVC_RECURSE_AGGREGATES,
+									 PVC_INCLUDE_PLACEHOLDERS);
+
+	return list_difference(tlist, *srflist);
 }
 
 /*
