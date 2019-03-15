@@ -27,3 +27,16 @@ SELECT * FROM
         JOIN bar ON b = c
         ) AS XY
         JOIN jazz on c = e AND b = f;
+
+EXPLAIN (COSTS OFF)
+SELECT *,
+	   (WITH cte AS (SELECT * FROM jazz WHERE jazz.e = bar.c)
+		SELECT 1 FROM cte c1, cte c2
+		)
+	FROM bar;
+
+SELECT *,
+	   (WITH cte AS (SELECT * FROM jazz WHERE jazz.e = bar.c)
+		SELECT 1 FROM cte c1, cte c2
+		)
+	FROM bar;

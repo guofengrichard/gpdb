@@ -30,3 +30,40 @@ SELECT * FROM
 ---+---+---+---+---+---
 (0 rows)
 
+EXPLAIN (COSTS OFF)
+SELECT *,
+	   (WITH cte AS (SELECT * FROM jazz WHERE jazz.e = bar.c)
+		SELECT 1 FROM cte c1, cte c2
+		)
+	FROM bar;
+                                             QUERY PLAN                                              
+-----------------------------------------------------------------------------------------------------
+ Gather Motion 3:1  (slice2; segments: 3)
+   ->  Seq Scan on bar
+         SubPlan 1  (slice2; segments: 3)
+           ->  Nested Loop
+                 ->  Shared Scan (share slice:id 2:0)
+                 ->  Materialize
+                       ->  Subquery Scan on c2
+                             ->  Shared Scan (share slice:id 2:0)
+                                   ->  Materialize
+                                         ->  Result
+                                               Filter: (jazz.e = bar.c)
+                                               ->  Materialize
+                                                     ->  Broadcast Motion 3:3  (slice1; segments: 3)
+                                                           ->  Seq Scan on jazz
+ Optimizer: Postgres query optimizer
+(15 rows)
+
+SELECT *,
+	   (WITH cte AS (SELECT * FROM jazz WHERE jazz.e = bar.c)
+		SELECT 1 FROM cte c1, cte c2
+		)
+	FROM bar;
+ c | d | ?column? 
+---+---+----------
+ 1 | 1 |         
+ 2 | 2 |        1
+ 3 | 3 |        1
+(3 rows)
+

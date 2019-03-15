@@ -449,8 +449,11 @@ ParallelizeCorrelatedSubPlanMutator(Node *node, ParallelizeCorrelatedPlanWalkerC
 		}
 	}
 
+	/*
+	 * We do not do this tranformation for ShareInputScan, instead we do it for
+	 * the SeqScan beneath the ShareInputScan.
+	 */
 	if (IsA(node, SeqScan)
-		||IsA(node, ShareInputScan)
 		||IsA(node, ExternalScan))
 	{
 		Plan	   *scanPlan = (Plan *) node;
