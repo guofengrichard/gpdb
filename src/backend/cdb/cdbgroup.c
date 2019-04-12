@@ -1772,7 +1772,7 @@ make_three_stage_agg_plan(PlannerInfo *root, MppGroupContext *ctx)
 							 package_plan_as_rte(root, coquery, coplan, eref, NIL, &coroot));
 			ctx->dqaArgs[i].coplan = add_subqueryscan(root, NULL, i + 1, coquery, coplan);
 
-			coplans = lappend(coplans, coplan);
+			coplans = lappend(coplans, ctx->dqaArgs[i].coplan);
 			coroots = lappend(coroots, coroot);
 		}
 
@@ -4631,7 +4631,7 @@ add_second_stage_agg(PlannerInfo *root,
 	 * for it.
 	 */
 	rebuild_simple_rel_and_rte(root,
-							   list_make1(((SubqueryScan *) result_plan)->subplan),
+							   list_make1((SubqueryScan *) result_plan),
 							   list_make1(subroot));
 
 	return agg_node;
@@ -5623,26 +5623,45 @@ rebuild_simple_rel_and_rte(PlannerInfo *root, List *subplans, List *subroots)
 	ListCell   *l;
 	ListCell   *lp;
 	ListCell   *lr;
+	int			orig_array_size;
+	RelOptInfo		**orig_simple_rel_array;
+	RangeTblEntry	**orig_simple_rte_array;
 
-	array_size = list_length(root->parse->rtable) + 1;
+	orig_array_size = root->simple_rel_array_size;
+	orig_simple_rel_array = root->simple_rel_array;
+	orig_simple_rte_array = root->simple_rte_array;
+
+	array_size = list_length(root->parse->rtable) + orig_array_size;
 	root->simple_rel_array_size = array_size;
 	root->simple_rel_array =
 		(RelOptInfo **) palloc0(sizeof(RelOptInfo *) * array_size);
 	root->simple_rte_array =
 		(RangeTblEntry **) palloc0(sizeof(RangeTblEntry *) * array_size);
-	i = 1;
+
+	for (i = 1; i < orig_array_size; i++)
+	{
+		root->simple_rel_array[i] = orig_simple_rel_array[i];
+		root->simple_rte_array[i] = orig_simple_rte_array[i];
+	}
+
+	i = orig_array_size;
 	foreach(l, root->parse->rtable)
 	{
 		root->simple_rte_array[i] = lfirst(l);
 		i++;
 	}
-	i = 1;
 
 	Assert(list_length(root->parse->rtable) == list_length(subplans));
 	Assert(list_length(root->parse->rtable) == list_length(subroots));
+
+	i = orig_array_size;
 	forthree(l, root->parse->rtable, lp, subplans, lr, subroots)
 	{
 		RelOptInfo *rel = build_simple_rel(root, i, RELOPT_BASEREL);
+		SubqueryScan *subqueryplan = (SubqueryScan *)lfirst(lp);
+
+		subqueryplan->scan.scanrelid += orig_array_size - 1;
+		Assert(subqueryplan->scan.scanrelid == i);
 
 		/*
 		 * Assign subroots and subplans for subquery rels. They are needed in
@@ -5650,7 +5669,7 @@ rebuild_simple_rel_and_rte(PlannerInfo *root, List *subplans, List *subroots)
 		 */
 		Assert(rel->rtekind == RTE_SUBQUERY);
 		rel->subroot = lfirst(lr);
-		rel->subplan = lfirst(lp);
+		rel->subplan = subqueryplan->subplan;
 
 		i++;
 	}
