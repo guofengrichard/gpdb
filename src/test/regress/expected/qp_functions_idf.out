@@ -700,21 +700,7 @@ select b+1 as col1 ,median(a+b) from perct group by b order by b desc;
 (11 rows)
 
 select b^2, median((select median(a) from perct) - (select sum(a)/10+ median(a) from perct ) + b + 500) from perct group by b order by b desc ;
- ?column? | median 
-----------+--------
-      100 |      5
-       81 |      4
-       64 |      3
-       49 |      2
-       36 |      1
-       25 |      0
-       16 |     -1
-        9 |     -2
-        4 |     -3
-        1 |     -4
-        0 |     -5
-(11 rows)
-
+ERROR:  shareinputscan with outer refs is not supported by GPDB
 -- PERCENTILE FUNCTION: SQL with math expression as input to IDF
 select b, percentile_disc(8*9/100 % 10 + 0.1::int) within group (order by a) from perct group by b order by b;
  b  | percentile_disc 

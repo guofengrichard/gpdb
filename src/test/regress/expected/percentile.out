@@ -885,11 +885,7 @@ select percentile_cont(0.1) within group (order by a),
 (1 row)
 
 select median(a - (select min(a) from percts)) from percts;
-       median       
---------------------
- @ 49 days 12 hours
-(1 row)
-
+ERROR:  shareinputscan with outer refs is not supported by GPDB
 select median(a), b from perct group by b order by b desc;
  median | b  
 --------+----
