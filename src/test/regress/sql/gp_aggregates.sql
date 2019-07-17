@@ -134,3 +134,9 @@ CREATE AGGREGATE my_numeric_avg(numeric) (
 create temp table numerictesttab as select g::numeric as n from generate_series(1,10) g;
 
 select my_numeric_avg(n) from numerictesttab;
+
+-- Test multi-phase aggregate with subquery scan
+create table multiagg_with_subquery (i int, j int, k int) distributed by (i);
+explain (costs off)
+select count(distinct j), count(distinct k) from (select j,k from multiagg_with_subquery group by j,k ) sub group by j;
+drop table multiagg_with_subquery;

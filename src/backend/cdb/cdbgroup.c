@@ -1772,6 +1772,8 @@ make_three_stage_agg_plan(PlannerInfo *root, MppGroupContext *ctx)
 							 package_plan_as_rte(root, coquery, coplan, eref, NIL, &coroot));
 			ctx->dqaArgs[i].coplan = add_subqueryscan(root, NULL, i + 1, coquery, coplan);
 
+			coplan->subqueryRel = NULL;
+
 			coplans = lappend(coplans, coplan);
 			coroots = lappend(coroots, coroot);
 		}
@@ -4598,6 +4600,8 @@ add_second_stage_agg(PlannerInfo *root,
 
 	result_plan = add_subqueryscan(root, p_current_pathkeys,
 								   1, subquery, result_plan);
+
+	((SubqueryScan *) result_plan)->subplan->subqueryRel = NULL;
 
 	/* Add an Agg node */
 	/* convert current_numGroups to long int */

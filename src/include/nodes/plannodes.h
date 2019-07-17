@@ -281,6 +281,14 @@ typedef struct Plan
 	 * The parent motion node of a plan node.
 	 */
 	struct Plan *motionNode;
+
+	/*
+	 * CDB: If this is a plan for subquery, we record the subquery's RelOptInfo
+	 * here. It is needed in set_subqueryscan_references(), but due to
+	 * rebuild_simple_rel_and_rte() for multi-phase agg, we cannot find it in
+	 * the root->simple_rel_array, so keep it here.
+	 */
+	struct RelOptInfo *subqueryRel;
 } Plan;
 
 /* ----------------
