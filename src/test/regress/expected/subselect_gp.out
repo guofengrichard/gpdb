@@ -1795,3 +1795,106 @@ DROP TABLE IF EXISTS dedup_test1;
 DROP TABLE IF EXISTS dedup_test2;
 DROP TABLE IF EXISTS dedup_test3;
 -- end_ignore
+--
+-- NOT EXISTS sublink with limit (issue 8396)
+--
+-- start_ignore
+DROP TABLE IF EXISTS dedup_test1;
+NOTICE:  table "dedup_test1" does not exist, skipping
+DROP TABLE IF EXISTS dedup_test2;
+NOTICE:  table "dedup_test2" does not exist, skipping
+-- end_ignore
+CREATE TABLE dedup_test1 ( a int, b int ) DISTRIBUTED BY (a);
+CREATE TABLE dedup_test2 ( e int, f int ) DISTRIBUTED BY (e);
+INSERT INTO dedup_test1 select i, i from generate_series(1,4)i;
+EXPLAIN
+SELECT * FROM dedup_test1 WHERE NOT EXISTS (SELECT 1 FROM dedup_test2 WHERE dedup_test2.e = dedup_test1.a LIMIT 0);
+                                 QUERY PLAN                                 
+----------------------------------------------------------------------------
+ Gather Motion 3:1  (slice1; segments: 3)  (cost=0.00..2.04 rows=4 width=8)
+   ->  Seq Scan on dedup_test1  (cost=0.00..2.04 rows=2 width=8)
+ Optimizer status: legacy query optimizer
+(3 rows)
+
+SELECT * FROM dedup_test1 WHERE NOT EXISTS (SELECT 1 FROM dedup_test2 WHERE dedup_test2.e = dedup_test1.a LIMIT 0);
+ a | b 
+---+---
+ 1 | 1
+ 2 | 2
+ 3 | 3
+ 4 | 4
+(4 rows)
+
+EXPLAIN
+SELECT * FROM dedup_test1 WHERE NOT EXISTS (SELECT 1 FROM dedup_test2 WHERE dedup_test2.e = dedup_test1.a LIMIT 1);
+                                    QUERY PLAN                                     
+-----------------------------------------------------------------------------------
+ Gather Motion 3:1  (slice1; segments: 3)  (cost=2036.17..2039.25 rows=17 width=8)
+   ->  Hash Left Anti Semi Join  (cost=2036.17..2039.25 rows=6 width=8)
+         Hash Cond: dedup_test1.a = dedup_test2.e
+         ->  Seq Scan on dedup_test1  (cost=0.00..2.04 rows=2 width=8)
+         ->  Hash  (cost=961.00..961.00 rows=28672 width=4)
+               ->  Seq Scan on dedup_test2  (cost=0.00..961.00 rows=28672 width=4)
+                     Filter: e IS NOT NULL
+ Optimizer status: legacy query optimizer
+(8 rows)
+
+SELECT * FROM dedup_test1 WHERE NOT EXISTS (SELECT 1 FROM dedup_test2 WHERE dedup_test2.e = dedup_test1.a LIMIT 1);
+ a | b 
+---+---
+ 1 | 1
+ 2 | 2
+ 3 | 3
+ 4 | 4
+(4 rows)
+
+EXPLAIN
+SELECT * FROM dedup_test1 WHERE NOT EXISTS (SELECT 1 FROM dedup_test2 WHERE dedup_test2.e = dedup_test1.a LIMIT NULL);
+                                    QUERY PLAN                                     
+-----------------------------------------------------------------------------------
+ Gather Motion 3:1  (slice1; segments: 3)  (cost=2036.17..2039.25 rows=17 width=8)
+   ->  Hash Left Anti Semi Join  (cost=2036.17..2039.25 rows=6 width=8)
+         Hash Cond: dedup_test1.a = dedup_test2.e
+         ->  Seq Scan on dedup_test1  (cost=0.00..2.04 rows=2 width=8)
+         ->  Hash  (cost=961.00..961.00 rows=28672 width=4)
+               ->  Seq Scan on dedup_test2  (cost=0.00..961.00 rows=28672 width=4)
+                     Filter: e IS NOT NULL
+ Optimizer status: legacy query optimizer
+(8 rows)
+
+SELECT * FROM dedup_test1 WHERE NOT EXISTS (SELECT 1 FROM dedup_test2 WHERE dedup_test2.e = dedup_test1.a LIMIT NULL);
+ a | b 
+---+---
+ 1 | 1
+ 2 | 2
+ 3 | 3
+ 4 | 4
+(4 rows)
+
+EXPLAIN
+SELECT * FROM dedup_test1 WHERE NOT EXISTS (SELECT 1 FROM dedup_test2 WHERE dedup_test2.e = dedup_test1.a LIMIT ALL);
+                                    QUERY PLAN                                     
+-----------------------------------------------------------------------------------
+ Gather Motion 3:1  (slice1; segments: 3)  (cost=2036.17..2039.25 rows=17 width=8)
+   ->  Hash Left Anti Semi Join  (cost=2036.17..2039.25 rows=6 width=8)
+         Hash Cond: dedup_test1.a = dedup_test2.e
+         ->  Seq Scan on dedup_test1  (cost=0.00..2.04 rows=2 width=8)
+         ->  Hash  (cost=961.00..961.00 rows=28672 width=4)
+               ->  Seq Scan on dedup_test2  (cost=0.00..961.00 rows=28672 width=4)
+                     Filter: e IS NOT NULL
+ Optimizer status: legacy query optimizer
+(8 rows)
+
+SELECT * FROM dedup_test1 WHERE NOT EXISTS (SELECT 1 FROM dedup_test2 WHERE dedup_test2.e = dedup_test1.a LIMIT ALL);
+ a | b 
+---+---
+ 1 | 1
+ 2 | 2
+ 3 | 3
+ 4 | 4
+(4 rows)
+
+-- start_ignore
+DROP TABLE IF EXISTS dedup_test1;
+DROP TABLE IF EXISTS dedup_test2;
+-- end_ignore

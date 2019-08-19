@@ -769,3 +769,40 @@ DROP TABLE IF EXISTS dedup_test1;
 DROP TABLE IF EXISTS dedup_test2;
 DROP TABLE IF EXISTS dedup_test3;
 -- end_ignore
+
+
+--
+-- NOT EXISTS sublink with limit (issue 8396)
+--
+
+-- start_ignore
+DROP TABLE IF EXISTS dedup_test1;
+DROP TABLE IF EXISTS dedup_test2;
+-- end_ignore
+
+CREATE TABLE dedup_test1 ( a int, b int ) DISTRIBUTED BY (a);
+CREATE TABLE dedup_test2 ( e int, f int ) DISTRIBUTED BY (e);
+
+INSERT INTO dedup_test1 select i, i from generate_series(1,4)i;
+
+
+EXPLAIN
+SELECT * FROM dedup_test1 WHERE NOT EXISTS (SELECT 1 FROM dedup_test2 WHERE dedup_test2.e = dedup_test1.a LIMIT 0);
+SELECT * FROM dedup_test1 WHERE NOT EXISTS (SELECT 1 FROM dedup_test2 WHERE dedup_test2.e = dedup_test1.a LIMIT 0);
+
+EXPLAIN
+SELECT * FROM dedup_test1 WHERE NOT EXISTS (SELECT 1 FROM dedup_test2 WHERE dedup_test2.e = dedup_test1.a LIMIT 1);
+SELECT * FROM dedup_test1 WHERE NOT EXISTS (SELECT 1 FROM dedup_test2 WHERE dedup_test2.e = dedup_test1.a LIMIT 1);
+
+EXPLAIN
+SELECT * FROM dedup_test1 WHERE NOT EXISTS (SELECT 1 FROM dedup_test2 WHERE dedup_test2.e = dedup_test1.a LIMIT NULL);
+SELECT * FROM dedup_test1 WHERE NOT EXISTS (SELECT 1 FROM dedup_test2 WHERE dedup_test2.e = dedup_test1.a LIMIT NULL);
+
+EXPLAIN
+SELECT * FROM dedup_test1 WHERE NOT EXISTS (SELECT 1 FROM dedup_test2 WHERE dedup_test2.e = dedup_test1.a LIMIT ALL);
+SELECT * FROM dedup_test1 WHERE NOT EXISTS (SELECT 1 FROM dedup_test2 WHERE dedup_test2.e = dedup_test1.a LIMIT ALL);
+
+-- start_ignore
+DROP TABLE IF EXISTS dedup_test1;
+DROP TABLE IF EXISTS dedup_test2;
+-- end_ignore

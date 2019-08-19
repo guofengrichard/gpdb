@@ -795,28 +795,28 @@ convert_NOT_EXISTS_to_antijoin(PlannerInfo *root, List **rtrlist_inout, SubLink 
 
 		/*
 		 * 'LIMIT n' makes NOT EXISTS true when n <= 0, and doesn't affect the
-		 * outcome when n > 0.  Delete subquery's LIMIT and build (0 < n) expr to
-		 * be ANDed into the parent qual.
+		 * outcome when n > 0. Return true to be ANDed into the parent qual if
+		 * n <= 0. If there's a LIMIT with anything else as argument, though,
+		 * just ignore such clauses.
 		 *
 		 */
 		if (subselect->limitCount != NULL)
 		{
-			Node	   *limitqual = NULL;
-			Expr	   *lnode;
-			Expr	   *rnode;
 
-			/* Do not handle limit offset for now */
-			Assert(!subselect->limitOffset);
+			Node    *node = eval_const_expressions(root, subselect->limitCount);
 
-			rnode = copyObject(subselect->limitCount);
-			IncrementVarSublevelsUp((Node *) rnode, -1, 1);
-			lnode = (Expr *) makeConst(INT8OID, -1, sizeof(int64), Int64GetDatum(0),
-									   false, true);
-			limitqual = (Node *) make_opclause(Int8LessOperator, BOOLOID, false, lnode, rnode);
+			subselect->limitCount = node;
 
-			subselect->limitCount = NULL;
+			if (IsA(node, Const))
+			{
+				Const   *limit = (Const *) node;
 
-			return (Node *) make_notclause((Expr *) limitqual);
+				Assert(limit->consttype == INT8OID);
+				if (!limit->constisnull && DatumGetInt64(limit->constvalue) <= 0)
+					return makeBoolConst(true, false);
+
+				subselect->limitCount = NULL;
+			}
 		}
 
 		/*
