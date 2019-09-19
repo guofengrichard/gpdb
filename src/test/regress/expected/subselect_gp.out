@@ -1813,8 +1813,9 @@ SELECT * FROM dedup_test1 WHERE NOT EXISTS (SELECT 1 FROM dedup_test2 WHERE dedu
 ----------------------------------------------------------------------------
  Gather Motion 3:1  (slice1; segments: 3)  (cost=0.00..2.04 rows=4 width=8)
    ->  Seq Scan on dedup_test1  (cost=0.00..2.04 rows=2 width=8)
+ Settings:  optimizer=off
  Optimizer status: legacy query optimizer
-(3 rows)
+(4 rows)
 
 SELECT * FROM dedup_test1 WHERE NOT EXISTS (SELECT 1 FROM dedup_test2 WHERE dedup_test2.e = dedup_test1.a LIMIT 0);
  a | b 
@@ -1836,8 +1837,9 @@ SELECT * FROM dedup_test1 WHERE NOT EXISTS (SELECT 1 FROM dedup_test2 WHERE dedu
          ->  Hash  (cost=961.00..961.00 rows=28672 width=4)
                ->  Seq Scan on dedup_test2  (cost=0.00..961.00 rows=28672 width=4)
                      Filter: e IS NOT NULL
+ Settings:  optimizer=off
  Optimizer status: legacy query optimizer
-(8 rows)
+(9 rows)
 
 SELECT * FROM dedup_test1 WHERE NOT EXISTS (SELECT 1 FROM dedup_test2 WHERE dedup_test2.e = dedup_test1.a LIMIT 1);
  a | b 
@@ -1859,8 +1861,9 @@ SELECT * FROM dedup_test1 WHERE NOT EXISTS (SELECT 1 FROM dedup_test2 WHERE dedu
          ->  Hash  (cost=961.00..961.00 rows=28672 width=4)
                ->  Seq Scan on dedup_test2  (cost=0.00..961.00 rows=28672 width=4)
                      Filter: e IS NOT NULL
+ Settings:  optimizer=off
  Optimizer status: legacy query optimizer
-(8 rows)
+(9 rows)
 
 SELECT * FROM dedup_test1 WHERE NOT EXISTS (SELECT 1 FROM dedup_test2 WHERE dedup_test2.e = dedup_test1.a LIMIT NULL);
  a | b 
@@ -1882,8 +1885,9 @@ SELECT * FROM dedup_test1 WHERE NOT EXISTS (SELECT 1 FROM dedup_test2 WHERE dedu
          ->  Hash  (cost=961.00..961.00 rows=28672 width=4)
                ->  Seq Scan on dedup_test2  (cost=0.00..961.00 rows=28672 width=4)
                      Filter: e IS NOT NULL
+ Settings:  optimizer=off
  Optimizer status: legacy query optimizer
-(8 rows)
+(9 rows)
 
 SELECT * FROM dedup_test1 WHERE NOT EXISTS (SELECT 1 FROM dedup_test2 WHERE dedup_test2.e = dedup_test1.a LIMIT ALL);
  a | b 

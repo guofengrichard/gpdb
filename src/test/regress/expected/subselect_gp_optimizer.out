@@ -1915,8 +1915,9 @@ SELECT * FROM dedup_test1 WHERE NOT EXISTS (SELECT 1 FROM dedup_test2 WHERE dedu
          ->  Table Scan on dedup_test1  (cost=0.00..431.00 rows=2 width=8)
          ->  Result  (cost=0.00..0.00 rows=0 width=1)
                One-Time Filter: false
- Optimizer status: PQO version 3.65.0
-(7 rows)
+ Settings:  optimizer=on
+ Optimizer status: PQO version 3.71.0
+(8 rows)
 
 SELECT * FROM dedup_test1 WHERE NOT EXISTS (SELECT 1 FROM dedup_test2 WHERE dedup_test2.e = dedup_test1.a LIMIT 0);
  a | b 
@@ -1943,8 +1944,9 @@ SELECT * FROM dedup_test1 WHERE NOT EXISTS (SELECT 1 FROM dedup_test2 WHERE dedu
                                    ->  Materialize  (cost=0.00..431.00 rows=1 width=4)
                                          ->  Broadcast Motion 3:3  (slice1; segments: 3)  (cost=0.00..431.00 rows=1 width=4)
                                                ->  Table Scan on dedup_test2  (cost=0.00..431.00 rows=1 width=4)
- Optimizer status: PQO version 3.65.0
-(13 rows)
+ Settings:  optimizer=on
+ Optimizer status: PQO version 3.71.0
+(14 rows)
 
 SELECT * FROM dedup_test1 WHERE NOT EXISTS (SELECT 1 FROM dedup_test2 WHERE dedup_test2.e = dedup_test1.a LIMIT 1);
  a | b 
@@ -1966,8 +1968,9 @@ SELECT * FROM dedup_test1 WHERE NOT EXISTS (SELECT 1 FROM dedup_test2 WHERE dedu
          ->  Hash  (cost=431.00..431.00 rows=1 width=4)
                ->  Result  (cost=0.00..431.00 rows=1 width=4)
                      ->  Table Scan on dedup_test2  (cost=0.00..431.00 rows=1 width=4)
- Optimizer status: PQO version 3.65.0
-(8 rows)
+ Settings:  optimizer=on
+ Optimizer status: PQO version 3.71.0
+(9 rows)
 
 SELECT * FROM dedup_test1 WHERE NOT EXISTS (SELECT 1 FROM dedup_test2 WHERE dedup_test2.e = dedup_test1.a LIMIT NULL);
  a | b 
@@ -1989,8 +1992,9 @@ SELECT * FROM dedup_test1 WHERE NOT EXISTS (SELECT 1 FROM dedup_test2 WHERE dedu
          ->  Hash  (cost=431.00..431.00 rows=1 width=4)
                ->  Result  (cost=0.00..431.00 rows=1 width=4)
                      ->  Table Scan on dedup_test2  (cost=0.00..431.00 rows=1 width=4)
- Optimizer status: PQO version 3.65.0
-(8 rows)
+ Settings:  optimizer=on
+ Optimizer status: PQO version 3.71.0
+(9 rows)
 
 SELECT * FROM dedup_test1 WHERE NOT EXISTS (SELECT 1 FROM dedup_test2 WHERE dedup_test2.e = dedup_test1.a LIMIT ALL);
  a | b 
