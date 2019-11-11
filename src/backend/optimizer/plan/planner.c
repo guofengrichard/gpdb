@@ -4089,10 +4089,6 @@ create_grouping_paths(PlannerInfo *root,
 	{
 		try_mpp_multistage_aggregation = false;
 	}
-	else if (parse->groupingSets)
-	{
-		try_mpp_multistage_aggregation = false;
-	}
 	else if (agg_costs->hasNonCombine || agg_costs->hasNonSerial)
 	{
 		try_mpp_multistage_aggregation = false;
@@ -4335,6 +4331,7 @@ create_grouping_paths(PlannerInfo *root,
 													  grouped_rel,
 													  path,
 													  target,
+													  AGGSPLIT_SIMPLE,
 												  (List *) parse->havingQual,
 													  rollup_lists,
 													  rollup_groupclauses,
@@ -4562,7 +4559,9 @@ create_grouping_paths(PlannerInfo *root,
 										   dNumGroups,
 										   agg_costs,
 										   &agg_partial_costs,
-										   &agg_final_costs);
+										   &agg_final_costs,
+										   rollup_lists,
+										   rollup_groupclauses);
 
 	/*
 	 * If there is an FDW that's responsible for all baserels of the query,
@@ -5591,7 +5590,10 @@ make_partial_grouping_target(PlannerInfo *root, PathTarget *grouping_target)
 	foreach(lc, grouping_target->exprs)
 	{
 		Expr	   *expr = (Expr *) lfirst(lc);
-		Index		sgref = get_pathtarget_sortgroupref(grouping_target, i);
+		Index		sgref = get_pathtarget_sortgroupref(grouping_target, i++);
+
+		if (IsA(expr, GroupingFunc))
+			continue;
 
 		if (sgref && parse->groupClause &&
 			get_sortgroupref_clause_noerr(sgref, parse->groupClause) != NULL)
@@ -5610,8 +5612,6 @@ make_partial_grouping_target(PlannerInfo *root, PathTarget *grouping_target)
 			 */
 			non_group_cols = lappend(non_group_cols, expr);
 		}
-
-		i++;
 	}
 
 	/*

@@ -45,6 +45,8 @@ typedef struct
 	const AggClauseCosts *agg_costs;
 	const AggClauseCosts *agg_partial_costs;
 	const AggClauseCosts *agg_final_costs;
+	List *rollup_lists;
+	List *rollup_groupclauses;
 } cdb_agg_planning_context;
 
 static void add_twostage_group_agg_path(PlannerInfo *root,
@@ -87,7 +89,9 @@ cdb_create_twostage_grouping_paths(PlannerInfo *root,
 								   double dNumGroups,
 								   const AggClauseCosts *agg_costs,
 								   const AggClauseCosts *agg_partial_costs,
-								   const AggClauseCosts *agg_final_costs)
+								   const AggClauseCosts *agg_final_costs,
+								   List *rollup_lists,
+								   List *rollup_groupclauses)
 {
 	Query	   *parse = root->parse;
 	Path	   *cheapest_path = input_rel->cheapest_total_path;
@@ -128,6 +132,8 @@ cdb_create_twostage_grouping_paths(PlannerInfo *root,
 	cxt.agg_costs = agg_costs;
 	cxt.agg_partial_costs = agg_partial_costs;
 	cxt.agg_final_costs = agg_final_costs;
+	cxt.rollup_lists = rollup_lists;
+	cxt.rollup_groupclauses = rollup_groupclauses;
 
 	/*
 	 * Consider 2-phase aggs
@@ -193,7 +199,9 @@ add_twostage_group_agg_path(PlannerInfo *root,
 	int			extra_aggsplitops = 0;
 
 	group_locus = cdb_choose_grouping_locus(root, path, ctx->target,
-											parse->groupClause, NIL, NIL,
+											parse->groupClause,
+											ctx->rollup_lists,
+											ctx->rollup_groupclauses,
 											&need_redistribute);
 	/*
 	 * If the distribution of this path is suitable, two-stage aggregation
@@ -228,10 +236,19 @@ add_twostage_group_agg_path(PlannerInfo *root,
 
 	if (!is_sorted)
 	{
+		List *pathkeys;
+
+		if (parse->groupingSets)
+			pathkeys = make_pathkeys_for_sortclauses(root,
+													 parse->groupClause,
+													 root->processed_tlist);
+		else
+			pathkeys = root->group_pathkeys;
+
 		path = (Path *) create_sort_path(root,
 										 output_rel,
 										 path,
-										 root->group_pathkeys,
+										 pathkeys,
 										 -1.0);
 	}
 
@@ -269,18 +286,41 @@ add_twostage_group_agg_path(PlannerInfo *root,
 									  false,
 									  singleQE_locus);
 
-	path = (Path *) create_agg_path(root,
-									output_rel,
-									path,
-									ctx->target,
-									parse->groupClause ? AGG_SORTED : AGG_PLAIN,
-									AGGSPLIT_FINAL_DESERIAL,
-									false, /* streaming */
-									parse->groupClause,
-									(List *) parse->havingQual,
-									ctx->agg_final_costs,
-									ctx->dNumGroups,
-									NULL);
+	/* Now decide what to stick atop it */
+	if (parse->groupingSets)
+	{
+		/*
+		 * We have grouping sets, possibly with aggregation.  Make
+		 * a GroupingSetsPath.
+		 */
+		path = (Path *) create_groupingsets_path(root,
+												 output_rel,
+												 path,
+												 ctx->target,
+												 AGGSPLIT_FINAL_DESERIAL,
+												 (List *) parse->havingQual,
+												 ctx->rollup_lists,
+												 ctx->rollup_groupclauses,
+												 ctx->agg_final_costs,
+												 ctx->dNumGroups);
+	}
+	else if (parse->hasAggs || parse->groupClause)
+	{
+
+		path = (Path *) create_agg_path(root,
+										output_rel,
+										path,
+										ctx->target,
+										parse->groupClause ? AGG_SORTED : AGG_PLAIN,
+										AGGSPLIT_FINAL_DESERIAL,
+										false, /* streaming */
+										parse->groupClause,
+										(List *) parse->havingQual,
+										ctx->agg_final_costs,
+										ctx->dNumGroups,
+										NULL);
+	}
+
 	add_path(output_rel, path);
 }
 
