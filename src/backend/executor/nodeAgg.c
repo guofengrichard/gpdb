@@ -877,15 +877,13 @@ void
 combine_aggregates(AggState *aggstate, AggStatePerGroup pergroup)
 {
 	int			transno;
+	int			setno = 0;
+	int			numGroupingSets = Max(aggstate->phase->numsets, 1);
 	int			numTrans = aggstate->numtrans;
-
-	/* combine not supported with grouping sets */
-	Assert(aggstate->phase->numsets == 0);
 
 	for (transno = 0; transno < numTrans; transno++)
 	{
 		AggStatePerTrans pertrans = &aggstate->pertrans[transno];
-		AggStatePerGroup pergroupstate = &pergroup[transno];
 		TupleTableSlot *slot;
 		FunctionCallInfo fcinfo = &pertrans->transfn_fcinfo;
 
@@ -937,7 +935,14 @@ combine_aggregates(AggState *aggstate, AggStatePerGroup pergroup)
 			fcinfo->argnull[1] = isnulls[0];
 		}
 
-		advance_combine_function(aggstate, pertrans, pergroupstate, fcinfo);
+		for (setno = 0; setno < numGroupingSets; setno++)
+		{
+			AggStatePerGroup pergroupstate = &pergroup[transno + (setno * numTrans)];
+
+			aggstate->current_set = setno;
+
+			advance_combine_function(aggstate, pertrans, pergroupstate, fcinfo);
+		}
 	}
 }
 

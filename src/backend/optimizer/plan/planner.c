@@ -155,7 +155,9 @@ static RelOptInfo *create_grouping_paths(PlannerInfo *root,
 					  PathTarget *target,
 					  const AggClauseCosts *agg_costs,
 					  List *rollup_lists,
-					  List *rollup_groupclauses);
+					  List *rollup_groupclauses,
+					  List *final_rollup_lists,
+					  List *final_rollup_groupclauses);
 static RelOptInfo *create_window_paths(PlannerInfo *root,
 					RelOptInfo *input_rel,
 					PathTarget *input_target,
@@ -2007,6 +2009,8 @@ grouping_planner(PlannerInfo *root, bool inheritance_update,
 		List	   *activeWindows = NIL;
 		List	   *rollup_lists = NIL;
 		List	   *rollup_groupclauses = NIL;
+		List	   *final_rollup_lists = NIL;
+		List	   *final_rollup_groupclauses = NIL;
 		standard_qp_extra qp_extra;
 
 		/* A recursive query should always have setOperations */
@@ -2092,6 +2096,48 @@ grouping_planner(PlannerInfo *root, bool inheritance_update,
 				/* Save the reordered sets and corresponding groupclauses */
 				rollup_lists = lcons(current_sets, rollup_lists);
 				rollup_groupclauses = lcons(groupclause, rollup_groupclauses);
+			}
+
+			/*
+			 * each grouping sets into one rollup in final_rollup_lists
+			 */
+			foreach(lc_set, parse->groupingSets)
+			{
+				List	   *current_sets = (List *) lfirst(lc_set);
+				List	   *groupclause;
+				int			ref;
+
+				/*
+				 * Order the groupClause appropriately.  If the first grouping
+				 * set is empty, this can match regular GROUP BY
+				 * preprocessing, otherwise we have to force the groupClause
+				 * to match that grouping set's order.
+				 */
+				groupclause = preprocess_groupclause(root, current_sets);
+
+				/*
+				 * Now that we've pinned down an order for the groupClause for
+				 * this list of grouping sets, we need to remap the entries in
+				 * the grouping sets from sortgrouprefs to plain indices
+				 * (0-based) into the groupClause for this collection of
+				 * grouping sets.
+				 */
+				ref = 0;
+				foreach(lc, groupclause)
+				{
+					SortGroupClause *gc = lfirst(lc);
+
+					tleref_to_colnum_map[gc->tleSortGroupRef] = ref++;
+				}
+
+				foreach(lc, current_sets)
+				{
+					lfirst_int(lc) = tleref_to_colnum_map[lfirst_int(lc)];
+				}
+
+				/* Save the reordered sets and corresponding groupclauses */
+				final_rollup_lists = lcons(list_make1(current_sets), final_rollup_lists);
+				final_rollup_groupclauses = lcons(groupclause, final_rollup_groupclauses);
 			}
 		}
 		else
@@ -2349,7 +2395,9 @@ grouping_planner(PlannerInfo *root, bool inheritance_update,
 												grouping_target,
 												&agg_costs,
 												rollup_lists,
-												rollup_groupclauses);
+												rollup_groupclauses,
+												final_rollup_lists,
+												final_rollup_groupclauses);
 		}
 
 		/*
@@ -3882,7 +3930,9 @@ create_grouping_paths(PlannerInfo *root,
 					  PathTarget *target,
 					  const AggClauseCosts *agg_costs,
 					  List *rollup_lists,
-					  List *rollup_groupclauses)
+					  List *rollup_groupclauses,
+					  List *final_rollup_lists,
+					  List *final_rollup_groupclauses)
 {
 	Query	   *parse = root->parse;
 	Path	   *cheapest_path = input_rel->cheapest_total_path;
@@ -4094,10 +4144,6 @@ create_grouping_paths(PlannerInfo *root,
 		try_mpp_multistage_aggregation = false;
 	}
 	else if (!parse->hasAggs && parse->groupClause == NIL)
-	{
-		try_mpp_multistage_aggregation = false;
-	}
-	else if (parse->groupingSets)
 	{
 		try_mpp_multistage_aggregation = false;
 	}
@@ -4343,6 +4389,7 @@ create_grouping_paths(PlannerInfo *root,
 													  grouped_rel,
 													  path,
 													  target,
+													  AGGSPLIT_SIMPLE,
 												  (List *) parse->havingQual,
 													  rollup_lists,
 													  rollup_groupclauses,
@@ -4570,7 +4617,11 @@ create_grouping_paths(PlannerInfo *root,
 										   dNumGroups,
 										   agg_costs,
 										   &agg_partial_costs,
-										   &agg_final_costs);
+										   &agg_final_costs,
+										   rollup_lists,
+										   rollup_groupclauses,
+										   final_rollup_lists,
+										   final_rollup_groupclauses);
 
 	/*
 	 * If there is an FDW that's responsible for all baserels of the query,
@@ -5599,7 +5650,10 @@ make_partial_grouping_target(PlannerInfo *root, PathTarget *grouping_target)
 	foreach(lc, grouping_target->exprs)
 	{
 		Expr	   *expr = (Expr *) lfirst(lc);
-		Index		sgref = get_pathtarget_sortgroupref(grouping_target, i);
+		Index		sgref = get_pathtarget_sortgroupref(grouping_target, i++);
+
+		if (IsA(expr, GroupingFunc))
+			continue;
 
 		if (sgref && parse->groupClause &&
 			get_sortgroupref_clause_noerr(sgref, parse->groupClause) != NULL)
@@ -5618,8 +5672,6 @@ make_partial_grouping_target(PlannerInfo *root, PathTarget *grouping_target)
 			 */
 			non_group_cols = lappend(non_group_cols, expr);
 		}
-
-		i++;
 	}
 
 	/*
@@ -5641,6 +5693,15 @@ make_partial_grouping_target(PlannerInfo *root, PathTarget *grouping_target)
 									  PVC_INCLUDE_PLACEHOLDERS);
 
 	add_new_columns_to_pathtarget(partial_target, non_group_exprs);
+
+	/*
+	 * GROUP_ID
+	 */
+	if (parse->groupingSets)
+	{
+		GroupId *grpid = makeNode(GroupId);
+		add_new_column_to_pathtarget(partial_target, (Expr *)grpid);
+	}
 
 	/*
 	 * Adjust Aggrefs to put them in partial mode.  At this point all Aggrefs
