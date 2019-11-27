@@ -2663,6 +2663,7 @@ typedef struct AggState
 	int			current_set;	/* The current grouping set being evaluated */
 	Bitmapset  *grouped_cols;	/* grouped cols in current projection */
 	int			group_id;		/* GROUP_ID in current projection */
+	int			numgsets;		/* number of grouping sets */
 	List	   *all_grouped_cols;		/* list of all grouped cols in DESC
 										 * order */
 	/* These fields are for grouping set phase data */
