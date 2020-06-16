@@ -1216,10 +1216,13 @@ simple_equality_predicate_refuted(List *restrictinfo_list,
 								  List *predicate_list)
 {
 	Node	*predicate;
-	Node	*leftPredicateOp;
-	Node	*rightPredicateOp;
-	Node 	*constExprInPredicate;
-	Node	*varExprInPredicate;
+	Node	*leftPredicateOp,
+			*rightPredicateOp;
+	Node 	*constExprInPredicate,
+			*varExprInPredicate;
+
+	Oid		leftPredicateType,
+			rightPredicateType;
 
 	/* don't both doing for self-refutation. let normal behavior handle that */
 	if (restrictinfo_list == predicate_list)
@@ -1235,6 +1238,24 @@ simple_equality_predicate_refuted(List *restrictinfo_list,
 	leftPredicateOp = get_leftop((Expr *)predicate);
 	rightPredicateOp = get_rightop((Expr *)predicate);
 	if (!leftPredicateOp || !rightPredicateOp)
+		return false;
+
+	/*
+	 * We constrain the input types of predicate to be integer for now as we
+	 * know it is safe.
+	 */
+	op_input_types(((OpExpr *) predicate)->opno,
+				   &leftPredicateType,
+				   &rightPredicateType);
+
+	if (!(leftPredicateType == INT2OID ||
+		  leftPredicateType == INT4OID ||
+		  leftPredicateType == INT8OID))
+		return false;
+
+	if (!(rightPredicateType == INT2OID ||
+		  rightPredicateType == INT4OID ||
+		  rightPredicateType == INT8OID))
 		return false;
 
 	/* check if it's equality operation */
@@ -1258,7 +1279,7 @@ simple_equality_predicate_refuted(List *restrictinfo_list,
 	}
 
 	if (IsA(varExprInPredicate, RelabelType))
-		varExprInPredicate = ((RelabelType *) varExprInPredicate)->arg;
+		varExprInPredicate = (Node *)((RelabelType *) varExprInPredicate)->arg;
 
 	if (!IsA(varExprInPredicate, Var))
 	{
@@ -1280,7 +1301,13 @@ simple_equality_predicate_refuted(List *restrictinfo_list,
 	 * relevant when the earlier check for varExprInPredicate being a Var is
 	 * removed.
 	 */
-	if (contain_mutable_functions(restrictinfo_list))
+	if (contain_mutable_functions((Node *)restrictinfo_list))
+		return false;
+
+	/*
+	 * Do not eval restrictinfo_list if it contains any nonstrict construct
+	 */
+	if (contain_nonstrict_functions((Node *)restrictinfo_list))
 		return false;
 
 	/* now do the evaluation */
@@ -1303,7 +1330,7 @@ simple_equality_predicate_refuted(List *restrictinfo_list,
 
 		old_context = MemoryContextSwitchTo(tmp_context);
 
-		newClause = replace_expression_mutator(restrictinfo_list, &replacement);
+		newClause = replace_expression_mutator((Node *)restrictinfo_list, &replacement);
 
 		if (replacement.numReplacementsDone > 0)
 		{

@@ -871,4 +871,27 @@ select get_selected_parts('explain analyze select * from bar where j is distinct
 -- 8 parts: NULL is shared with others on p1. So, all 8 parts.
 select get_selected_parts('explain analyze select * from bar where j is distinct from NULL;');
 
+-- Test for over-eager constraint exclusion, issue #10287
+drop table if exists parttab;
+create table parttab (n numeric, t text) partition by list (n)(partition one values ('1'));
+
+insert into parttab values
+	('1', 'one'),
+	('1.0', 'one point zero'),
+	('1.00', 'one point zero zero');
+
+explain (costs off)
+select * from parttab where length(n::text) = 3;
+select * from parttab where length(n::text) = 3;
+
+-- Test for constraint exclusion with NULL tuples, issue #8582
+drop table if exists ta;
+create table ta(a int check(a = 1));
+
+insert into ta values(null);
+
+explain (costs off)
+select * from ta where a is null;
+select * from ta where a is null;
+
 RESET ALL;

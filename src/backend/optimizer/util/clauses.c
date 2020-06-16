@@ -1343,6 +1343,15 @@ contain_nonstrict_functions_walker(Node *node, void *context)
 {
 	if (node == NULL)
 		return false;
+
+	/* the functions in predtest.c handle expressions and
+	 * RestrictInfo objects -- so make this function handle
+	 * them too for convenience */
+	if (IsA(node, RestrictInfo))
+	{
+		RestrictInfo *rinfo = (RestrictInfo *) node;
+		return contain_nonstrict_functions_walker((Node*)rinfo->clause, context);
+	}
 	if (IsA(node, Aggref))
 	{
 		/* an aggregate could return non-null with null input */
