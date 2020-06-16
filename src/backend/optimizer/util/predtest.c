@@ -32,8 +32,6 @@
 #include "catalog/pg_operator.h"
 #include "optimizer/paths.h"
 
-static const bool kUseFnEvaluationForPredicates = true;
-
 /*
  * Proof attempts involving large arrays in ScalarArrayOpExpr nodes are
  * likely to require O(N^2) time, and more often than not fail anyway.
@@ -107,7 +105,8 @@ static Oid	get_btree_test_op(Oid pred_op, Oid clause_op, bool refute_it);
 static void InvalidateOprProofCacheCallBack(Datum arg, int cacheid, uint32 hashvalue);
 
 
-static bool simple_equality_predicate_refuted(Node *clause, Node *predicate);
+static bool simple_equality_predicate_refuted(List *restrictinfo_list,
+											  List *predicate_list);
 
 /*
  * predicate_implied_by
@@ -213,12 +212,10 @@ predicate_refuted_by(List *predicate_list, List *restrictinfo_list)
 		r = (Node *) restrictinfo_list;
 
 	/* And away we go ... */
-	if ( predicate_refuted_by_recurse(r, p))
+	if (predicate_refuted_by_recurse(r, p))
         return true;
 
-    if ( ! kUseFnEvaluationForPredicates )
-        return false;
-    return simple_equality_predicate_refuted((Node*)restrictinfo_list, (Node*)predicate_list);
+	return simple_equality_predicate_refuted(restrictinfo_list, predicate_list);
 }
 
 /*----------
@@ -1199,60 +1196,58 @@ convertToExplicitAndsShallowly( Node *n)
     else return n;
 }
 
-/**
- * Check to see if the predicate is expr=constant or constant=expr. In that case, try to evaluate the clause
- *   by replacing every occurrence of expr with the constant.  If the clause can then be reduced to FALSE, we
- *   conclude that the expression is refuted
+/*
+ * Check to see if the predicate is expr=constant or constant=expr. In that
+ * case, try to evaluate the clause by replacing every occurrence of expr with
+ * the constant.  If the clause can then be reduced to FALSE, we conclude that
+ * the expression is refuted
  *
- * Returns true only if evaluation is possible AND expression is refuted based on evaluation results
+ * Returns true only if evaluation is possible AND expression is refuted based
+ * on evaluation results
  *
- * MPP-18979:
- * This mechanism cannot be used to prove implication. One example expression is
- * "F(x)=1 and x=2", where F(x) is an immutable function that returns 1 for any input x.
- * In this case, replacing x with 2 produces F(2)=1 and 2=2. Although evaluating the resulting
- * expression gives TRUE, we cannot conclude that (x=2) is implied by the whole expression.
- *
+ * MPP-18979: This mechanism cannot be used to prove implication. One example
+ * expression is "F(x)=1 and x=2", where F(x) is an immutable function that
+ * returns 1 for any input x.  In this case, replacing x with 2 produces F(2)=1
+ * and 2=2. Although evaluating the resulting expression gives TRUE, we cannot
+ * conclude that (x=2) is implied by the whole expression.
  */
 static bool
-simple_equality_predicate_refuted(Node *clause, Node *predicate)
+simple_equality_predicate_refuted(List *restrictinfo_list,
+								  List *predicate_list)
 {
-	OpExpr *predicateExpr;
-	Node *leftPredicateOp, *rightPredicateOp;
-    Node *constExprInPredicate, *varExprInPredicate;
-	List *list;
+	Node	*predicate;
+	Node	*leftPredicateOp;
+	Node	*rightPredicateOp;
+	Node 	*constExprInPredicate;
+	Node	*varExprInPredicate;
 
-    /* BEGIN inspecting the predicate: this only works for a simple equality predicate */
-    if ( nodeTag(predicate) != T_List )
-        return false;
-
-    if ( clause == predicate )
-        return false; /* don't both doing for self-refutation ... let normal behavior handle that */
-
-    list = (List *) predicate;
-    if ( list_length(list) != 1 )
-        return false;
-
-    predicate = linitial(list);
-	if ( ! is_opclause(predicate))
+	/* don't both doing for self-refutation. let normal behavior handle that */
+	if (restrictinfo_list == predicate_list)
 		return false;
 
-	predicateExpr = (OpExpr*) predicate;
-	leftPredicateOp = get_leftop((Expr*)predicate);
-	rightPredicateOp = get_rightop((Expr*)predicate);
+	if (list_length(predicate_list) != 1)
+		return false;
+
+	predicate = linitial(predicate_list);
+	if (!is_opclause(predicate))
+		return false;
+
+	leftPredicateOp = get_leftop((Expr *)predicate);
+	rightPredicateOp = get_rightop((Expr *)predicate);
 	if (!leftPredicateOp || !rightPredicateOp)
 		return false;
 
 	/* check if it's equality operation */
-	if ( ! is_builtin_true_equality_between_same_type(predicateExpr->opno))
+	if (!is_builtin_true_equality_between_same_type(((OpExpr *) predicate)->opno))
 		return false;
 
 	/* check if one operand is a constant */
-	if ( IsA(rightPredicateOp, Const))
+	if (IsA(rightPredicateOp, Const))
 	{
 		varExprInPredicate = leftPredicateOp;
 		constExprInPredicate = rightPredicateOp;
 	}
-	else if ( IsA(leftPredicateOp, Const))
+	else if (IsA(leftPredicateOp, Const))
 	{
 		constExprInPredicate = leftPredicateOp;
 		varExprInPredicate = rightPredicateOp;
@@ -1262,30 +1257,30 @@ simple_equality_predicate_refuted(Node *clause, Node *predicate)
 	    return false;
 	}
 
-    if ( IsA(varExprInPredicate, RelabelType))
-    {
-        RelabelType *rt = (RelabelType*) varExprInPredicate;
-        varExprInPredicate = (Node*) rt->arg;
-    }
+	if (IsA(varExprInPredicate, RelabelType))
+		varExprInPredicate = ((RelabelType *) varExprInPredicate)->arg;
 
-    if ( ! IsA(varExprInPredicate, Var))
-    {
-        /* for now, this code is targeting predicates used in value partitions ...
-         *   so don't apply it for other expressions.  This check can probably
-         *   simply be removed and some test cases built. */
-        return false;
-    }
+	if (!IsA(varExprInPredicate, Var))
+	{
+		/* for now, this code is targeting predicates used in value partitions.
+		 * so don't apply it for other expressions.  This check can probably
+		 * simply be removed and some test cases built.
+		 */
+		return false;
+	}
 
-    /* DONE inspecting the predicate */
+	/* DONE inspecting the predicate */
 
-	/* clause may have non-immutable functions...don't eval if that's the case:
+	/* restrictinfo_list may have non-immutable functions...don't eval if
+	 * that's the case.
 	 *
-	 * Note that since we are replacing elements of the clause that match
-	 *   varExprInPredicate, there is no need to also check varExprInPredicate
-	 *   for mutable functions (note that this is only relevant when the
-	 *   earlier check for varExprInPredicate being a Var is removed.
+	 * Note that since we are replacing elements of the restrictinfo_list that
+	 * match varExprInPredicate, there is no need to also check
+	 * varExprInPredicate for mutable functions (note that this is only
+	 * relevant when the earlier check for varExprInPredicate being a Var is
+	 * removed.
 	 */
-	if ( contain_mutable_functions(clause))
+	if (contain_mutable_functions(restrictinfo_list))
 		return false;
 
 	/* now do the evaluation */
@@ -1298,7 +1293,7 @@ simple_equality_predicate_refuted(Node *clause, Node *predicate)
 
 		replacement.replaceThis = varExprInPredicate;
 		replacement.withThis = constExprInPredicate;
-        replacement.numReplacementsDone = 0;
+		replacement.numReplacementsDone = 0;
 
 		tmp_context = AllocSetContextCreate(CurrentMemoryContext,
 											"Predtest",
@@ -1308,27 +1303,27 @@ simple_equality_predicate_refuted(Node *clause, Node *predicate)
 
 		old_context = MemoryContextSwitchTo(tmp_context);
 
-		newClause = replace_expression_mutator(clause, &replacement);
+		newClause = replace_expression_mutator(restrictinfo_list, &replacement);
 
-        if ( replacement.numReplacementsDone > 0)
-        {
-            newClause = convertToExplicitAndsShallowly(newClause);
-            reducedExpression = eval_const_expressions(NULL, newClause);
+		if (replacement.numReplacementsDone > 0)
+		{
+			newClause = convertToExplicitAndsShallowly(newClause);
+			reducedExpression = eval_const_expressions(NULL, newClause);
 
-            if ( IsA(reducedExpression, Const ))
-            {
-                Const *c = (Const *) reducedExpression;
-                if ( c->consttype == BOOLOID &&
-                     ! c->constisnull )
-                {
-                	result = (DatumGetBool(c->constvalue) == false);
-                }
-            }
-        }
+			if (IsA(reducedExpression, Const))
+			{
+				Const *c = (Const *) reducedExpression;
+				if (c->consttype == BOOLOID &&
+						!c->constisnull)
+				{
+					result = (DatumGetBool(c->constvalue) == false);
+				}
+			}
+		}
 
 		MemoryContextSwitchTo(old_context);
 		MemoryContextDelete(tmp_context);
-        return result;
+		return result;
 	}
 }
 
