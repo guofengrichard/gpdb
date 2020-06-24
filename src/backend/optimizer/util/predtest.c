@@ -1268,7 +1268,7 @@ simple_equality_predicate_refuted(List *restrictinfo_list,
 	}
 
 	if (IsA(varExprInPredicate, RelabelType))
-		varExprInPredicate = ((RelabelType *) varExprInPredicate)->arg;
+		varExprInPredicate = (Node *)((RelabelType *) varExprInPredicate)->arg;
 
 	if (!IsA(varExprInPredicate, Var))
 	{
@@ -1290,7 +1290,13 @@ simple_equality_predicate_refuted(List *restrictinfo_list,
 	 * relevant when the earlier check for varExprInPredicate being a Var is
 	 * removed.
 	 */
-	if (contain_mutable_functions(restrictinfo_list))
+	if (contain_mutable_functions((Node *)restrictinfo_list))
+		return false;
+
+	/*
+	 * Do not eval restrictinfo_list if it contains any nonstrict construct
+	 */
+	if (contain_nonstrict_functions((Node *)restrictinfo_list))
 		return false;
 
 	/* now do the evaluation */
@@ -1313,7 +1319,7 @@ simple_equality_predicate_refuted(List *restrictinfo_list,
 
 		old_context = MemoryContextSwitchTo(tmp_context);
 
-		newClause = replace_expression_mutator(restrictinfo_list, &replacement);
+		newClause = replace_expression_mutator((Node *)restrictinfo_list, &replacement);
 
 		if (replacement.numReplacementsDone > 0)
 		{

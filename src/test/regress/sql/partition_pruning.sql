@@ -871,4 +871,14 @@ select get_selected_parts('explain analyze select * from bar where j is distinct
 -- 8 parts: NULL is shared with others on p1. So, all 8 parts.
 select get_selected_parts('explain analyze select * from bar where j is distinct from NULL;');
 
+-- Test for constraint exclusion with NULL tuples, issue #8582
+drop table if exists ta;
+create table ta(a int check(a = 1));
+
+insert into ta values(null);
+
+explain (costs off)
+select * from ta where a is null;
+select * from ta where a is null;
+
 RESET ALL;
