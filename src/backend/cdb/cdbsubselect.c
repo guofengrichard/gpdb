@@ -1237,10 +1237,10 @@ find_nonnullable_vars_walker(Node *node, NonNullableVarsContext *context)
 static bool
 is_param_nullable(Node *node, Query *query, Value *oprname)
 {
-	bool result = false;
 	NonNullableVarsContext context;
 	Expr *expr;
 	ListCell *lc;
+	List *args = NIL;
 	Expr *arg;
 
 	Assert(query);
@@ -1273,10 +1273,31 @@ is_param_nullable(Node *node, Query *query, Value *oprname)
 	else
 		return true;
 
-	if (nodeTag(expr) != T_OpExpr)
+	if (nodeTag(expr) == T_OpExpr)
+	{
+		args = ((OpExpr*)expr)->args;
+	}
+	else if (nodeTag(expr) == T_BoolExpr)
+	{
+		OpExpr *opexpr;
+
+		if(((BoolExpr *) expr)->boolop != AND_EXPR)
+			return true;
+
+		foreach(lc, ((BoolExpr *)expr)->args)
+		{
+			opexpr = (OpExpr *)lfirst(lc);
+
+			if (nodeTag(opexpr) != T_OpExpr)
+				return true;
+
+			args = list_concat_unique(args, opexpr->args);
+		}
+	}
+	else
 		return true;
 
-	foreach(lc, ((OpExpr*)expr)->args)
+	foreach(lc, args)
 	{
 		arg = lfirst(lc);
 
@@ -1296,7 +1317,7 @@ is_param_nullable(Node *node, Query *query, Value *oprname)
 			 * Note: the 'dummy' column is not NULL, so we don't need any special handling for it
 			 */
 			if (constant->constisnull == true)
-				result = true;
+				return true;
 		}
 		else if (nodeTag(arg) == T_Var)
 		{
@@ -1304,15 +1325,13 @@ is_param_nullable(Node *node, Query *query, Value *oprname)
 
 			/* Was this var determined to be non-nullable? */
 			if (!list_member(context.nonNullableVars, var))
-			{
-				result = true;
-			}
+				return true;
 		}
 		else
-			result = true;
+			return true;
 	}
 
-	return result;
+	return false;
 }
 
 /**
@@ -1348,8 +1367,6 @@ is_targetlist_nullable(Query *subq)
 	context.nonNullableVars = NIL;
 	expression_tree_walker((Node *) subq->jointree, find_nonnullable_vars_walker, &context);
 
-	bool		result = false;
-
 	/**
 	 * Now cross-check with the actual targetlist of the query.
 	 */
@@ -1364,7 +1381,7 @@ is_targetlist_nullable(Query *subq)
 			/**
 			 * Be conservative.
 			 */
-			result = true;
+			return true;
 		}
 
 		if (nodeTag(tle->expr) == T_Const)
@@ -1378,9 +1395,7 @@ is_targetlist_nullable(Query *subq)
 			 *  Note: the 'dummy' column is not NULL, so we don't need any special handling for it 
 			 */	
 			if (constant->constisnull == true)
-			{
-				result = true;
-			}
+				return true;
 		}
 		else if (nodeTag(tle->expr) == T_Var)
 		{
@@ -1388,20 +1403,18 @@ is_targetlist_nullable(Query *subq)
 
 			/* Was this var determined to be non-nullable? */
 			if (!list_member(context.nonNullableVars, var))
-			{
-				result = true;
-			}
+				return true;
 		}
 		else
 		{
 			/**
 			 * Be conservative.
 			 */
-			result = true;
+			return true;
 		}
 	}
 
-	return result;
+	return false;
 }
 
 /*

@@ -424,6 +424,14 @@ select * from table_source3 where c3 = 'INC' and c4 = '0000000001' and c2 not in
 explain select * from table_source4 where c3 = 'INC' and c4 = '0000000001' and c2 not in (SELECT c1 from table_config where c2='test');
 select * from table_source4 where c3 = 'INC' and c4 = '0000000001' and c2 not in (SELECT c1 from table_config where c2='test');
 
+-- Test nullability of OUTER is checked correctly
+--
+-- q47
+--
+explain select * from g1 where (a,b) not in
+	(select x,y from l1 where x is not null and y is not null) and a is not null and b is not null;
+select * from g1 where (a,b) not in
+	(select x,y from l1 where x is not null and y is not null) and a is not null and b is not null;
 
 reset search_path;
 drop schema notin cascade;

@@ -1314,6 +1314,36 @@ select * from table_source4 where c3 = 'INC' and c4 = '0000000001' and c2 not in
  000181202006010000003158 | a  | INC | 0000000001
 (1 row)
 
+-- Test nullability of OUTER is checked correctly
+--
+-- q47
+--
+explain select * from g1 where (a,b) not in
+	(select x,y from l1 where x is not null and y is not null) and a is not null and b is not null;
+                                             QUERY PLAN                                             
+----------------------------------------------------------------------------------------------------
+ Gather Motion 3:1  (slice1; segments: 3)  (cost=1.15..2.27 rows=3 width=12)
+   ->  Hash Left Anti Semi (Not-In) Join  (cost=1.15..2.23 rows=1 width=12)
+         Hash Cond: ((g1.a = l1.x) AND (g1.b = l1.y))
+         ->  Seq Scan on g1  (cost=0.00..1.04 rows=4 width=12)
+               Filter: ((a IS NOT NULL) AND (b IS NOT NULL))
+         ->  Hash  (cost=1.10..1.10 rows=3 width=8)
+               ->  Redistribute Motion 3:3  (slice2; segments: 3)  (cost=0.00..1.10 rows=3 width=8)
+                     Hash Key: l1.x
+                     ->  Seq Scan on l1  (cost=0.00..1.03 rows=3 width=8)
+                           Filter: ((x IS NOT NULL) AND (y IS NOT NULL))
+ Optimizer: Postgres query optimizer
+(11 rows)
+
+select * from g1 where (a,b) not in
+	(select x,y from l1 where x is not null and y is not null) and a is not null and b is not null;
+ a | b | c 
+---+---+---
+ 1 | 2 | 2
+ 2 | 3 | 3
+ 3 | 4 | 4
+(3 rows)
+
 reset search_path;
 drop schema notin cascade;
 NOTICE:  drop cascades to 16 other objects
